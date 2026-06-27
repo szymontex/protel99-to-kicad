@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "protel99-to-kicad"
+version = "0.1.0"
+description = "Parse Protel 99 SE binary PCB files (PCB FILE 9 VERSION 2.70) and convert to KiCad format"
+requires-python = ">=3.10"
+license = "MIT"
+readme = "README.md"
+authors = [
+    { name = "Szymon Gwóźdź" },
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Electronic Design Automation (EDA)",
+]
+
+[project.optional-dependencies]
+plot = ["matplotlib"]
+
+[project.scripts]
+protel99-parse = "protel99_parser:main"
+
+[project.urls]
+Homepage = "https://github.com/szymontex/protel99-to-kicad"
+Repository = "https://github.com/szymontex/protel99-to-kicad"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
