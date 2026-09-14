@@ -28,6 +28,7 @@ plot = ["matplotlib"]
 
 [project.scripts]
 protel99-parse = "protel99_parser:main"
+pcb9-to-kicad = "protel99_parser.pcb9_kicad:main"
 
 [project.urls]
 Homepage = "https://github.com/szymontex/protel99-to-kicad"
