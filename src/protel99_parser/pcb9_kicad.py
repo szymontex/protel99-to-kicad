@@ -249,7 +249,7 @@ def emit_text(out: list, fr: Frame, t: pcb9.Text, layer: str, indent="  "):
     p = fr.pt(t.x, t.y)
     h = fr.mm(t.height) if t.height > 0 else 1.0
     s = fr.mm(t.stroke) if t.stroke > 0 else h * 0.15
-    txt = t.text.replace("\\", "\\\\").replace('"', '\\"')
+    txt = _q(t.text)
     mirror = " mirror" if t.mirror else ""
     out.append(f'{indent}(gr_text "{txt}" (at {_f(p[0])} {_f(p[1])} {_f(t.rotation % 360)}) (layer "{layer}")'
                f' (uuid "{_uuid()}") (effects (font (size {_f(h)} {_f(h)}) (thickness {_f(s)}))'
@@ -344,7 +344,7 @@ def emit_pad(out: list, fr: Frame, p: pcb9.Pad, ax: float, ay: float, arot: floa
         drill = " (drill 0.1)"
     if sx <= 0 or sy <= 0:
         sx = sy = max(p.hole * 1.5, 10.0)
-    name = p.name.replace("\\", "\\\\").replace('"', '\\"')
+    name = _q(p.name)
     rot = f" {_f(prot)}" if prot else ""
     netc = f" {nets.clause(p.net, True)}" if nets and nets.code(p.net) else ""
     out.append(f'{indent}(pad "{name}" {kind} {kshape} (at {_f(lx_mm)} {_f(ly_mm)}{rot})'
@@ -356,7 +356,7 @@ def emit_fp_text(out: list, fr: Frame, t: pcb9.Text, kind: str, ax: float, ay: f
     lx, ly = rotate(t.x - ax, t.y - ay, -arot)
     h = fr.mm(t.height) if t.height > 0 else 1.0
     s = fr.mm(t.stroke) if t.stroke > 0 else h * 0.15
-    txt = t.text.replace("\\", "\\\\").replace('"', '\\"')
+    txt = _q(t.text)
     trot = (t.rotation - arot) % 360.0
     mirror = " mirror" if t.mirror else ""
     hide = " (hide yes)" if (not t.text.strip() or (kind == "Reference" and HIDE_DESIGNATORS)) else ""
@@ -370,7 +370,7 @@ def emit_component(out: list, fr: Frame, c: pcb9.Component, warn: set, nets: Net
     side = "B" if bottom else "F"
     ax, ay = fr.pt(c.x, c.y)
     rot = c.rotation % 360.0
-    name = c.footprint.replace("\\", "\\\\").replace('"', '\\"')
+    name = _q(c.footprint)
     out.append(f'  (footprint "{name}" (layer "{side}.Cu") (uuid "{_uuid()}")'
                f' (at {_f(ax)} {_f(ay)} {_f(rot)})')
     desig_layer = layer_name(c.designator.layer, warn) if c.designator.layer else f"{side}.SilkS"
@@ -386,7 +386,7 @@ def emit_component(out: list, fr: Frame, c: pcb9.Component, warn: set, nets: Net
         lx, ly = rotate(t.x - c.x, t.y - c.y, -rot)
         h = fr.mm(t.height) if t.height > 0 else 1.0
         s = fr.mm(t.stroke) if t.stroke > 0 else h * 0.15
-        txt = t.text.replace("\\", "\\\\").replace('"', '\\"')
+        txt = _q(t.text)
         if txt.strip():
             out.append(f'    (fp_text user "{txt}" (at {_f(lx * MIL_TO_MM)} {_f(-ly * MIL_TO_MM)} {_f((t.rotation - rot) % 360)})'
                        f' (layer "{layer_name(t.layer, warn)}") (uuid "{_uuid()}")'
@@ -435,7 +435,7 @@ def emit_free_pad(out: list, fr: Frame, p: pcb9.Pad, nets: Nets):
     out.append(f'  (footprint "FreePad" (layer "{side}.Cu") (uuid "{_uuid()}") (at {_f(ax)} {_f(ay)} 0)')
     out.append(f'    (property "Reference" "" (at 0 0 0) (layer "{side}.SilkS") (hide yes) (uuid "{_uuid()}")'
                f' (effects (font (size 1 1) (thickness 0.15))))')
-    out.append(f'    (property "Value" "{p.name}" (at 0 0 0) (layer "{side}.Fab") (hide yes) (uuid "{_uuid()}")'
+    out.append(f'    (property "Value" "{_q(p.name)}" (at 0 0 0) (layer "{side}.Fab") (hide yes) (uuid "{_uuid()}")'
                f' (effects (font (size 1 1) (thickness 0.15))))')
     out.append(f'    (attr {"through_hole" if (p.hole > 0 or p.layer == MULTILAYER) else "smd"} board_only exclude_from_pos_files exclude_from_bom)')
     emit_pad(out, fr, p, p.x, p.y, 0.0, f"{side}.Cu", nets)

@@ -2,6 +2,7 @@
 synthetic bytes, plus a full-board check when the reference boards are present.
 """
 import os
+import re
 import struct
 from pathlib import Path
 
@@ -87,3 +88,42 @@ def test_reference_board_counts_match_header(name, expected):
     assert {k: b.counts[k] for k in expected} == expected
     assert b.unknown_tags == {}
     assert b.errors == []
+
+
+class _FreePad:
+    """Minimal stand-in for a pad outside any component."""
+    x = y = 1000.0
+    layer = 1
+    hole = 30.0
+    net = 0
+    rotation = 0.0
+    top = mid = bot = (50.0, 50.0, 1)
+
+    def __init__(self, name):
+        self.name = name
+
+
+def test_pad_name_from_the_file_cannot_break_out_of_the_s_expression():
+    """A string out of the binary must stay a string in the generated board.
+
+    Pad names, footprint names and text all come from the file and all end up
+    inside quoted atoms. One of the two places that write a pad name used the
+    raw value, so a name holding a quote closed the atom and opened a node of
+    the attacker's choosing - extra footprints, zones or copper in a board a
+    designer then sends to a fab.
+    """
+    from protel99_parser import pcb9_kicad as K
+
+    out = []
+    K.emit_free_pad(out, K.Frame(0.0, 10000.0),
+                    _FreePad('ID")) (footprint "EVIL'), None)
+    blob = "\n".join(out)
+
+    # Every quote from the file is escaped, so no atom ends early.
+    assert '(property "Value" "ID\\")) (footprint \\"EVIL"' in blob
+
+    # And the block still parses: strings blanked out, parentheses balance.
+    depth = 0
+    for ch in re.sub(r'"(?:[^"\\]|\\.)*"', '""', blob):
+        depth += (ch == "(") - (ch == ")")
+    assert depth == 0
