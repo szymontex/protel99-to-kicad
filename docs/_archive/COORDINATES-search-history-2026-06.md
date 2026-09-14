@@ -1,3 +1,5 @@
+> **ARCHIVED 2026-09-13.** This document described the file as a list of typed records and claimed that REC_17 tails hold no absolute positions. Both readings were wrong: the bytes it calls record types are string lengths, and every coordinate in the file is absolute. It is kept as the record of what was tried. The current specification is [`../FORMAT.md`](../FORMAT.md).
+
 # Coordinate Encoding - Discovery and Status
 
 ## Summary

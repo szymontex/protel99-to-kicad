@@ -29,6 +29,52 @@ KiCad `.kicad_pcb`: components, copper, vias, and board outline.
   - through-hole vias,
   - the board outline on `Edge.Cuts`.
 
+## Native binary decoder (`pcb9-to-kicad`)
+
+The `PCB FILE 9 VERSION 2.70` format is fully decoded - see
+[`docs/FORMAT.md`](docs/FORMAT.md). `pcb9-to-kicad` reads the binary alone
+and writes a KiCad 9 board with every pad, track, via, arc, fill, text, net
+and the board outline. No footprint library, no ASCII export, no ground
+truth file.
+
+```bash
+pcb9-to-kicad board.PCB -o board.kicad_pcb          # one board
+pcb9-to-kicad --batch archive/ converted/           # every PCB FILE 9 board under archive/
+pcb9-to-kicad board.PCB -o out.kicad_pcb --outline-layer 29   # Protel layer of the board outline
+pcb9-to-kicad board.PCB -o out.kicad_pcb --hide-designators    # silkscreen as Protel plotted it
+```
+
+Measured against Protel's own ASCII v2.70 export of two boards (all objects,
+one-to-one, in mils): components, pads (position and the size on each copper
+side), tracks, vias, arcs and fills 100 % matched, median error 0.000 mil.
+Pad positions re-read through KiCad's own `pcbnew` loader differ from the
+binary by at most 0.0003 mil. Across an archive of 1178 boards every file
+converts; 8 boards with byte-level damage are read in salvage mode and
+reported as such.
+
+A second, independent witness: the gerbers Protel itself plotted for these
+boards, kept in the same archive. Compared layer by layer (pads and vias one
+to one, copper as distance to the other side's copper body, NC drill files
+hit by hit): pads and vias within 1 mil, copper 100 % on the boards checked
+by hand, every drill hole matched with the tool diameter Protel wrote.
+Protel paints pads and tracks that have no matching aperture with a brush
+and adds the Mechanical 1 outline to every plot; both are accounted for in
+the comparison, not in the output.
+
+What the output carries that a first look may miss: through pads keep
+Protel's three sizes (top, inner, bottom) as a KiCad 9 padstack; the solder
+mask opening is the pad plus 2 mil a side, as in Protel's mask plots;
+`--hide-designators` writes designators as hidden fields, which is how
+Protel's silkscreen plots in this archive show them (the flag itself is not
+identified in the binary).
+
+Not carried over: polygon pours (written as unfilled zone outlines; the
+vertex axis order is inferred from two files only), design rules.
+
+The older `protel99-parse` pipeline below predates the decoded format. It
+relies on footprint libraries and an ASCII export for positions and copper.
+Use `pcb9-to-kicad`.
+
 ## Installation
 
 ```bash
