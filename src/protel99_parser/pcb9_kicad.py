@@ -76,17 +76,47 @@ class Frame:
 
 
 def board_extent(b: pcb9.Board) -> tuple[float, float, float, float]:
+    """The rectangle every emitted object fits in, in mils.
+
+    This decides the frame origin, so anything left out of it lands at a
+    negative KiCad coordinate - above and to the left of the page, off the
+    sheet. An earlier version read free tracks and fills, component bounding
+    boxes and component tracks, and nothing else. On one archive board that
+    saw 5098 x 3749 mil of a board that is 18242 x 14602: its arcs, texts,
+    vias and the pads that reach past their component's box were all outside
+    the frame. Every object class the generator writes is measured here.
+    """
     xs, ys = [], []
-    for t in b.tracks:
-        xs += [t.x1, t.x2]; ys += [t.y1, t.y2]
+
+    def span(src):
+        for t in src.tracks:
+            xs.extend((t.x1, t.x2)); ys.extend((t.y1, t.y2))
+        for a in src.arcs:
+            xs.extend((a.x - a.radius, a.x + a.radius))
+            ys.extend((a.y - a.radius, a.y + a.radius))
+        for f in src.fills:
+            xs.extend((f.x1, f.x2)); ys.extend((f.y1, f.y2))
+        for v in src.vias:
+            xs.extend((v.x - v.diameter / 2, v.x + v.diameter / 2))
+            ys.extend((v.y - v.diameter / 2, v.y + v.diameter / 2))
+        for p in src.pads:
+            sx, sy, _sh = pad_geometry(p)
+            r = max(sx, sy, p.hole) / 2.0
+            xs.extend((p.x - r, p.x + r)); ys.extend((p.y - r, p.y + r))
+        for t in src.texts:
+            if t.bbox:
+                xs.extend((t.bbox[0], t.bbox[2])); ys.extend((t.bbox[1], t.bbox[3]))
+
+    span(b)
     for c in b.components:
-        xs += [c.bbox[0], c.bbox[2]]; ys += [c.bbox[1], c.bbox[3]]
-        for t in c.tracks:
-            xs += [t.x1, t.x2]; ys += [t.y1, t.y2]
-    for p in b.pads:
-        xs.append(p.x); ys.append(p.y)
-    for f in b.fills:
-        xs += [f.x1, f.x2]; ys += [f.y1, f.y2]
+        xs.extend((c.bbox[0], c.bbox[2])); ys.extend((c.bbox[1], c.bbox[3]))
+        span(c)
+        for t in (c.designator, c.comment):
+            if t is not None and t.text and t.bbox:
+                xs.extend((t.bbox[0], t.bbox[2])); ys.extend((t.bbox[1], t.bbox[3]))
+
+    if not xs:
+        return 0.0, 0.0, 1000.0, 1000.0
     return min(xs), min(ys), max(xs), max(ys)
 
 
@@ -155,13 +185,43 @@ class Nets:
         return f"(net {c})"
 
 
-def emit_header(out: list, copper_layers: int, nets: Nets):
+# Drawing sheets KiCad knows, landscape, in mm. Ordered small to large so the
+# first that fits is the smallest that fits.
+PAGES = [("A5", 210.0, 148.0), ("A4", 297.0, 210.0), ("A3", 420.0, 297.0),
+         ("A2", 594.0, 420.0), ("A1", 841.0, 594.0), ("A0", 1189.0, 841.0)]
+
+# Space between the board and the edge of the sheet, in mils. KiCad draws its
+# frame border about 10 mm in; a board laid against the corner starts outside
+# it. 1000 mil is 25.4 mm, which clears the border and keeps the origin on the
+# same 1000-mil grid the frame already rounds to.
+MARGIN_MIL = 1000.0
+
+
+def choose_paper(width_mm: float, height_mm: float) -> str:
+    """The smallest sheet the board fits on, or a custom one when none does.
+
+    The page used to be `A3` for every board. Anything bigger than 420 x 297 mm
+    - and this archive has panels well past that - was drawn hanging off the
+    right-hand side of its own sheet.
+    """
+    w = width_mm + 2 * MARGIN_MIL * MIL_TO_MM
+    h = height_mm + 2 * MARGIN_MIL * MIL_TO_MM
+    for name, pw, ph in PAGES:
+        if w <= pw and h <= ph:
+            return f'(paper "{name}")'
+        if w <= ph and h <= pw:
+            return f'(paper "{name}" portrait)'
+    # KiCad accepts a user page between 25.4 mm and 1200 mm on a side.
+    return f'(paper "User" {_f(min(max(w, 100.0), 1200.0))} {_f(min(max(h, 100.0), 1200.0))})'
+
+
+def emit_header(out: list, copper_layers: int, nets: Nets, paper: str = '(paper "A3")'):
     out.append("(kicad_pcb")
     out.append(f"  (version {KICAD_VERSION})")
     out.append('  (generator "pcb9_to_kicad")')
     out.append('  (generator_version "9.0")')
     out.append("  (general (thickness 1.6) (legacy_teardrops no))")
-    out.append('  (paper "A3")')
+    out.append(f"  {paper}")
     out.append("  (layers")
     out.append('    (0 "F.Cu" signal)')
     for i in range(1, copper_layers - 1):
@@ -451,7 +511,9 @@ def generate(b: pcb9.Board, outline_layer: int) -> tuple[str, dict]:
     LAYERS.clear(); LAYERS.update(layers)
 
     x0, y0, x1, y1 = board_extent(b)
-    fr = Frame(math.floor(x0 / 1000.0) * 1000.0, math.ceil(y1 / 1000.0) * 1000.0)
+    fr = Frame(math.floor(x0 / 1000.0) * 1000.0 - MARGIN_MIL,
+               math.ceil(y1 / 1000.0) * 1000.0 + MARGIN_MIL)
+    paper = choose_paper((x1 - x0) * MIL_TO_MM, (y1 - y0) * MIL_TO_MM)
 
     used_copper = {t.layer for t in b.tracks} | {t.layer for c in b.components for t in c.tracks}
     used_copper |= {f.layer for f in b.fills} | {f.layer for c in b.components for f in c.fills}
@@ -462,7 +524,7 @@ def generate(b: pcb9.Board, outline_layer: int) -> tuple[str, dict]:
 
     nets = Nets(b)
     out: list[str] = []
-    emit_header(out, copper_layers, nets)
+    emit_header(out, copper_layers, nets, paper)
     stats = dict(components=0, segments=0, vias=0, arcs_copper=0, arcs_graphic=0, fills=0,
                  outline=0, texts=0, free_pads=0, gr_lines=0, nets=len(nets.names),
                  polygons=0, parse_errors=len(b.errors))
