@@ -8,10 +8,10 @@ outside the 32..126 range plus CR LF, measured across all eleven.
 Grammar. Two header lines, then records until `ENDPCB`:
 
     PCB FILE 6 VERSION 2.80
-    0 470 84 22 7 7 30 49 93 63          object counts
+    0 12 0 3 0 1 2 0 8 4                 object counts
     COMP                                 record tag on its own line
-    W-FN_V                               operand lines, tag decides how many
-    0 0 903992 1030000 1 0 0 ...
+    DIP14                                operand lines, tag decides how many
+    0 0 1000000 2000000 1 0 0 ...
     ...
     ENDPCB
 
