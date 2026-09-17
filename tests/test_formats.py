@@ -257,3 +257,50 @@ def test_design_databases_are_walked_by_batch_runs():
     """A project folder holds `.ddb`, not loose boards. Skipping the extension
     means reporting nothing about the file the project actually arrived in."""
     assert ".ddb" in formats.readable_suffixes()
+
+
+# --------------------------------------------------------------------------
+# `.pcb` files written by something that is not Protel
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize("head,label", [
+    (b"\x00\xff\x17 \x03\x00\x00\x00" + b"\x00" * 40, "PADS (binary)"),
+    (b"!PADS-POWERPCB-V9.0-MILS!" + b"\x00" * 30, "PADS (ASCII)"),
+    (b'ACCEL_ASCII "C:\\board.pcb"' + b"\x00" * 30, "P-CAD / ACCEL ASCII"),
+    (b"# release: pcb 20110918\n" + b"\x00" * 30, "gEDA pcb"),
+    (b"ha:pcb-rnd-board-v2 {\n" + b"\x00" * 30, "pcb-rnd (lihata)"),
+    (b"CIRCAD Version 4.0 -- Data File" + b"\x00" * 20, "CIRCAD"),
+    (b"(kicad_pcb (version 20241229)" + b"\x00" * 20, "KiCad"),
+    (b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 40, "OLE compound"),
+])
+def test_a_foreign_pcb_is_named_rather_than_called_unrecognised(tmp_path, head, label):
+    """`.pcb` belongs to at least five tools, and a board downloaded from a
+    chip maker's evaluation page is more often PADS than Protel. Measured on 40
+    Analog Devices design packages: 37 PADS boards, 36 OrCAD schematics, zero
+    Protel. "Unrecognised header" would be a dead end for every one of them."""
+    p = write(tmp_path, "b.pcb", head)
+    assert formats.identify(p) is None          # it is not a Protel board
+    found = formats.identify_foreign(p)
+    assert found is not None and label in found.label
+    with pytest.raises(formats.UnsupportedFormat) as e:
+        formats.parse(p)
+    assert label in str(e.value)
+    assert found.advice in str(e.value)
+
+
+def test_a_protel_board_is_not_mistaken_for_a_foreign_one(tmp_path):
+    """The PADS signature is two bytes, so it has to be pinned down further."""
+    for head in (b"\x17\xa1PCB FILE 9 VERSION 2.70" + b"\x00" * 40,
+                 b"PCB FILE 4\r\nCOMP\r\n" + b"\x00" * 40,
+                 b"\x00\x01\x00\x00Standard Jet DB\x00" + b"\x00" * 40):
+        p = write(tmp_path, "b.pcb", head)
+        assert formats.identify(p) is not None
+        assert formats.identify_foreign(p) is None
+
+
+def test_an_unknown_file_still_says_so(tmp_path):
+    p = write(tmp_path, "b.pcb", b"nothing anyone has ever written" + b"\x00" * 30)
+    assert formats.identify_foreign(p) is None
+    with pytest.raises(formats.UnsupportedFormat) as e:
+        formats.parse(p)
+    assert "unrecognised header" in str(e.value)

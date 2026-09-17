@@ -105,6 +105,57 @@ FORMATS: tuple = (
 )
 
 
+@dataclass(frozen=True)
+class Foreign:
+    """A `.pcb` file written by something that is not Protel."""
+    label: str
+    magic: bytes
+    advice: str
+    tail: bytes = b""          # a second byte pattern, at `tail_at`
+    tail_at: int = 0
+
+    def matches(self, head: bytes) -> bool:
+        if not head.startswith(self.magic):
+            return False
+        if not self.tail:
+            return True
+        return head[self.tail_at:self.tail_at + len(self.tail)] == self.tail
+
+
+# `.pcb` is not a Protel extension - it is four vendors' extension, and a board
+# downloaded from a chip maker's evaluation page is more likely to be one of
+# these than a Protel file. Saying which one it is turns a dead end into a next
+# step. The advice names KiCad 9's own importers, checked against an installed
+# 9.0.8: it has P-CAD, gEDA and Altium, and no PADS.
+FOREIGN = (
+    # PADS binary: 00 FF <version> 20. Analog Devices, Linear Technology and
+    # many others ship their evaluation boards in this.
+    Foreign("PADS (binary)", b"\x00\xff",
+            "KiCad 9 has no PADS importer; the development branch does. PADS "
+            "itself exports ASCII, which more tools read",
+            tail=b" ", tail_at=3),
+    Foreign("PADS (ASCII)", b"!PADS-POWERPCB",
+            "KiCad 9 has no PADS importer; the development branch does"),
+    Foreign("P-CAD / ACCEL ASCII", b"ACCEL_ASCII",
+            "KiCad reads this: File > Import > Non-KiCad Board File"),
+    Foreign("gEDA pcb", b"# release: pcb",
+            "KiCad reads this: File > Import > Non-KiCad Board File"),
+    # pcb-rnd's own format. It writes the gEDA one too, so both turn up.
+    Foreign("pcb-rnd (lihata)", b"ha:pcb-rnd-board",
+            "pcb-rnd exports the gEDA PCB format, which KiCad reads"),
+    Foreign("CIRCAD", b"CIRCAD",
+            "no importer known; CIRCAD plots gerbers, which KiCad reads"),
+    Foreign("KiCad", b"(kicad_pcb",
+            "this is already a KiCad board"),
+    # OLE compound document. Altium `.PcbDoc` and OrCAD `.dsn` share it, and
+    # both turn up under a `.pcb` name in vendor download packages.
+    Foreign("OLE compound document - Altium .PcbDoc or OrCAD .dsn",
+            b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1",
+            "if it is Altium, KiCad reads it: File > Import > Non-KiCad Board "
+            "File. See docs/COMPATIBILITY.md"),
+)
+
+
 def identify(path: Path) -> Format | None:
     """Name the format from the file header, or None if nothing matches."""
     head = Path(path).open("rb").read(64)
@@ -114,6 +165,15 @@ def identify(path: Path) -> Format | None:
                 return fmt
         elif fmt.magic in head:
             return fmt
+    return None
+
+
+def identify_foreign(path: Path) -> Foreign | None:
+    """Name the tool that wrote a `.pcb` this package has no business reading."""
+    head = Path(path).open("rb").read(64)
+    for f in FOREIGN:
+        if f.matches(head):
+            return f
     return None
 
 
@@ -128,6 +188,11 @@ def parse(path: Path):
     path = Path(path)
     fmt = identify(path)
     if fmt is None:
+        other = identify_foreign(path)
+        if other is not None:
+            raise UnsupportedFormat(
+                f"{path.name}: this is a {other.label} file, not a Protel "
+                f"board - {other.advice}")
         head = path.open("rb").read(40)
         printable = "".join(chr(b) if 32 <= b < 127 else "." for b in head)
         raise UnsupportedFormat(
