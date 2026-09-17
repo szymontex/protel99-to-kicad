@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Write a KiCad 9 board straight from a Protel board file.
 
-Reads whatever generation the file is written in - `PCB FILE 9 VERSION 2.70`
-(Protel 99 SE) and `PCB FILE 6 VERSION 2.80` (Protel for Windows) today, see
-`formats.py`. Every reader returns the same model, so this writer never asks
-which one it got.
+Reads whatever generation the file is written in - Autotrax and Easytrax, the
+PCB ASCII exports of every vintage, the `PCB FILE 9` binary and the boards
+stored as text inside a `.ddb` design database. `formats.py` is the list. Every
+reader returns the same model and the same layer numbering, so this writer
+never asks which one it got.
 
 No footprint libraries, no ASCII export, no ground truth: the source file
 carries every pad, track, arc, fill and text, so the board is emitted from
@@ -114,7 +115,14 @@ def board_extent(b: pcb9.Board) -> tuple[float, float, float, float]:
 
     span(b)
     for c in b.components:
-        xs.extend((c.bbox[0], c.bbox[2])); ys.extend((c.bbox[1], c.bbox[3]))
+        # Only `PCB FILE 9` stores a component bounding box. The ASCII formats
+        # do not, and their readers leave it all zero - which is truthy, so
+        # measuring it drags the frame back to the origin and draws the whole
+        # board in one corner of an otherwise empty sheet. A box with no width
+        # and no height describes nothing; the component's own primitives,
+        # measured just below, describe where it is.
+        if c.bbox and (c.bbox[2] > c.bbox[0] or c.bbox[3] > c.bbox[1]):
+            xs.extend((c.bbox[0], c.bbox[2])); ys.extend((c.bbox[1], c.bbox[3]))
         span(c)
         for t in (c.designator, c.comment):
             if t is not None and t.text and t.bbox:
@@ -641,11 +649,22 @@ def batch(in_dir: Path, out_dir: Path, outline_layer: int | None = None) -> int:
             unknown += 1
             continue
         if fmt.reader is None:
-            undecoded[fmt.label] = undecoded.get(fmt.label, 0) + 1
+            label = f"{fmt.label} not decoded yet"
+            undecoded[label] = undecoded.get(label, 0) + 1
             continue
         target = out_dir / p.relative_to(in_dir).with_suffix(".kicad_pcb")
         try:
             stats = convert(p, target, outline_layer)
+        except formats.UnsupportedFormat as e:
+            # The format table said there is a reader, and the reader turned
+            # the file down - a vintage it will not claim to understand, or a
+            # design database with nothing readable inside. That is the same
+            # answer as a format with no reader at all, so it counts the same
+            # way. Calling it a failure would put a red line against files
+            # this package never claimed.
+            undecoded[str(e).split(": ", 1)[-1]] = \
+                undecoded.get(str(e).split(": ", 1)[-1], 0) + 1
+            continue
         except Exception as e:  # noqa: BLE001 - keep the batch going, report at the end
             failed += 1
             print(f"FAIL  {p.relative_to(in_dir)}: {type(e).__name__}: {e}", file=sys.stderr)
@@ -656,7 +675,7 @@ def batch(in_dir: Path, out_dir: Path, outline_layer: int | None = None) -> int:
               f" segments {stats['segments']} vias {stats['vias']} nets {stats['nets']}{flag}")
     print(f"batch: {done} converted, {failed} failed", file=sys.stderr)
     for label, n in sorted(undecoded.items()):
-        print(f"       {n} skipped: {label} not decoded yet", file=sys.stderr)
+        print(f"       {n} skipped: {label}", file=sys.stderr)
     if unknown:
         print(f"       {unknown} skipped: header not recognised", file=sys.stderr)
     return 1 if failed else 0

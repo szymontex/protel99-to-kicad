@@ -8,14 +8,20 @@ them all the same `.PCB` extension, so the extension tells you nothing. This
 package reads the header, picks the right decoder, and writes a KiCad 9
 `.kicad_pcb` with components, copper tracks, vias, arcs, fills, text, nets and
 the board outline - **from the board file alone**, with no footprint library
-and no ASCII export.
+and no ASCII export. Six generations of the format go in and one KiCad board
+comes out; the writer is never told which one it was handed.
 
 | Your file says | Written by | Status |
 |---|---|---|
-| `PCB FILE 9 VERSION 2.70` | Protel 99 SE | **converts** |
-| `PCB FILE 6 VERSION 2.80` | Protel for Windows / Protel 3 | **converts** |
-| `PCB 4.0 Binary File` | Protel Advanced PCB 3.00 | recognised, research in progress |
-| `PCB FILE 5` / `PCB FILE 4` | Protel Autotrax / Easytrax | recognised, not implemented |
+| `PCB FILE 4` | Protel Autotrax | **converts** |
+| `PCB FILE 5` | Protel Easytrax | **converts** |
+| `PCB FILE 9 VERSION 2.70` | Protel for Windows / Advanced PCB | **converts** |
+| `PCB FILE 6 VERSION 1.10` / `2.70` / `2.80` | Protel PCB ASCII export | **converts** |
+| `\|RECORD=Board\|...` | Protel 98 / 99 / 99 SE, saved as PCB ASCII | **converts** |
+| `.ddb` design database | Protel 99 / 99 SE | **converts** the boards inside it that are text |
+| `PCB FILE 9 VERSION 2.00` / `2.60` | Protel for Windows 2.x | recognised, not decoded |
+| `PCB 4.0 Binary File` | Protel 98 / 99 / 99 SE | recognised, not decoded - [save it as PCB ASCII](docs/COMPATIBILITY.md#protel-pcb-ascii---the-way-out-of-the-binary) |
+| `PCB 3.0 Binary File`, `DOS 3 PCB` | Protel Advanced PCB 3, Protel for DOS | recognised, not decoded |
 | `.PcbDoc` | Altium Designer | use KiCad's own importer - [how](docs/COMPATIBILITY.md#altium-pcbdoc---use-kicad-directly) |
 
 Full detail, accuracy figures and caveats: **[docs/COMPATIBILITY.md](docs/COMPATIBILITY.md)**.
@@ -42,9 +48,11 @@ silence:
 
 ```
 ok    analog-front.PCB  [pcb9]  components 108 segments 1402 vias 138 nets 106
+ok    z80-cpu.PCB       [pcb4]  components  52 segments  594 vias  29 nets   0
 ok    filter-rev2.pcb   [pcb6]  components  97 segments  585 vias  11 nets  65
 ok    psu-board.pcb     [pcb6]  components 136 segments  799 vias  17 nets  89  SALVAGED (3 errors)
-batch: 14 converted, 0 failed
+ok    tag104.ddb        [ddb ]  components  60 segments 3282 vias  60 nets  32
+batch: 18 converted, 0 failed
        1 skipped: PCB 4.0 Binary File not decoded yet
 ```
 
@@ -60,22 +68,28 @@ head -c 40 board.PCB | strings | head -1
 |------|-------------|
 | `-o`, `--output PATH` | Output `.kicad_pcb` path |
 | `--batch IN_DIR OUT_DIR` | Convert every readable board under `IN_DIR`, mirroring the tree |
-| `--outline-layer N` | Protel layer holding the board outline. Default follows the format: 29 for `PCB FILE 9`, 28 for `PCB FILE 6` |
+| `--outline-layer N` | Protel layer holding the board outline. Default follows the format: 29 (Mechanical 1) for `PCB FILE 9` and PCB ASCII, 28 (Keep Out) for `PCB FILE 6` and Autotrax |
 | `--hide-designators` | Write designators as hidden fields, as Protel's silkscreen plots show them |
 | `--quiet` | Suppress the per-board summary |
 
 ## Why this exists
 
-`PCB FILE 9 VERSION 2.70` is the binary board format of Protel 99 SE, the
-direct predecessor of Altium Designer. The format was abandoned around 2003 and
-**no current tool reads it** - not Altium Designer, not `protel2kicad`, not
-KiCad. The identifier does not appear in any published Protel specification;
-the vendor documented `PCB FILE 4` / `PCB FILE 5` (Autotrax / Easytrax),
-`PCB FILE 6 VERSION 2.80` and `Advanced_PCB 3.00`, and stopped there.
+`PCB FILE 9 VERSION 2.70` is a binary board format from the Protel for Windows
+and Advanced PCB generation - the line that became Altium Designer. It was
+abandoned around 2003 and **no current tool reads it** - not Altium Designer,
+not `protel2kicad`, not KiCad. The identifier appears in no published Protel
+specification: the vendor documented the ASCII formats and stopped there.
 
-So boards drawn in the late 1990s and early 2000s are readable only by software
-nobody can license or run any more. This package decodes the bytes instead. The
-specification recovered from them is in [`docs/FORMAT.md`](docs/FORMAT.md).
+So boards drawn in the 1990s are readable only by software nobody can license
+or run any more. This package decodes the bytes instead. The specification
+recovered from them is in [`docs/FORMAT.md`](docs/FORMAT.md).
+
+The text formats are a different problem and get a different answer. `PCB FILE
+4` and `PCB FILE 5` were specified by the vendor and are implemented here from
+that specification. `PCB FILE 6` and the later `|RECORD=|` PCB ASCII are what
+Protel writes when asked for text, and reading them is what lets a board from a
+generation whose **binary** is undecoded reach KiCad anyway: open it in Protel,
+save as PCB ASCII, convert that.
 
 ## Accuracy
 
@@ -98,6 +112,24 @@ and via positions within 0.0003 mil of the binary.
 of any kind: 1170 parse clean with zero count mismatches and zero unknown tags;
 8 are damaged at byte level and are read in salvage mode, which reports every
 resynchronisation with its offset.
+
+**Boards published by other people.** 140 boards collected from vendor
+installers on archive.org and from 35 unrelated GitHub repositories, none of
+them written by anyone involved here, were converted and then drawn by
+`kicad-cli` from the converted file (measured 2026-09-17):
+
+| Format | Boards | Clean | Salvaged | Failed |
+|---|---|---|---|---|
+| `PCB FILE 4` / `PCB FILE 5` | 95 | 95 | 0 | 0 |
+| `PCB FILE 6` (1.10 and 2.80) | 21 | 21 | 0 | 0 |
+| `PCB FILE 9 VERSION 2.70` | 7 | 6 | 1 | 0 |
+| `.ddb` design databases | 16 | 6 | 10 | 0 |
+| Protel PCB ASCII | 1 | 1 | 0 | 0 |
+
+Salvage means the reader lost records to damage and said so with a line number,
+not that it guessed. The `.ddb` figure is high for a reason worth knowing: the
+database writes its own page headers straight through the document stored
+inside it.
 
 Per-format figures and their caveats - including where a format has **no**
 independent witness - are in [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md).
@@ -187,8 +219,9 @@ pip install -e .
 pytest
 ```
 
-The suite covers the stream primitives, format detection and the `PCB FILE 6`
-reader against synthetic data. Reference-board tests read their directory from
+The suite covers the stream primitives, format detection and every ASCII
+reader against synthetic data - the Autotrax and PCB ASCII fixtures are the
+record examples printed in the vendors' own specifications. Reference-board tests read their directory from
 `PCB9_REFERENCE_DIR` and skip cleanly when the boards are not present; real
 boards are intentionally not bundled.
 
@@ -198,8 +231,9 @@ MIT. See [`LICENSE`](LICENSE).
 
 ---
 
-<sub>Keywords: Protel to KiCad converter, Protel 99 SE to KiCad, open Protel PCB
-file, `PCB FILE 9 VERSION 2.70`, `PCB FILE 6 VERSION 2.80`, Protel Advanced PCB
-3.00, Autotrax, Easytrax, legacy PCB file conversion, EDA file format reverse
-engineering, Altium PcbDoc to KiCad, convert old PCB files, `.PCB` file
-format.</sub>
+<sub>Keywords: Protel to KiCad converter, Protel 99 SE to KiCad, Autotrax to
+KiCad, Easytrax to KiCad, open Protel PCB file, convert `.ddb` to KiCad,
+Protel PCB ASCII, `PCB FILE 4`, `PCB FILE 5`, `PCB FILE 6 VERSION 2.80`,
+`PCB FILE 9 VERSION 2.70`, `PCB 4.0 Binary File`, Protel Advanced PCB, Protel
+for Windows, legacy PCB file conversion, EDA file format reverse engineering,
+Altium PcbDoc to KiCad, convert old PCB files, `.PCB` file format.</sub>

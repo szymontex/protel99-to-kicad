@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""Reader for `PCB FILE 6 VERSION 2.80` boards.
+"""Reader for `PCB FILE 6` boards - Protel's ASCII interchange format.
 
 Twelve boards in the archive were filed as unreadable. Eleven of them are this
 format and it is not a binary at all - the files are plain ASCII, zero bytes
 outside the 32..126 range plus CR LF, measured across all eleven.
 
-Grammar. Two header lines, then records until `ENDPCB`:
+Protel's own reference calls this "PCB ASCII", and version numbers track the
+product generation rather than a redesign: 1.10, 2.70 and 2.80 all appear in
+the wild and all share one grammar. Two header lines, then records until
+`ENDPCB`:
 
     PCB FILE 6 VERSION 2.80
     0 12 0 3 0 1 2 0 8 4                 object counts
@@ -19,9 +22,21 @@ Tags come in a component pair and a free pair: `CT`/`FT` track, `CP`/`FP` pad,
 `CS`/`FS` text, `CF`/`FF` fill, `CA`/`FA` arc, `FV` via. Objects tagged `C*`
 belong to the `COMP` most recently opened; `F*` stand on their own.
 
-Coordinates are in 1/1000 mil, not the 1/10000 mil of `PCB FILE 9`. The scale
-is not a guess: vias measure 51181 and pads 137795, which are 1.3 mm and 3.5 mm
-to five digits, and no other power of ten puts a via near a millimetre.
+Three things change between versions, and all three are read from the file
+rather than assumed:
+
+- **Scale.** 2.70 and 2.80 count 1/1000 mil. The scale is not a guess: vias
+  measure 51181 and pads 137795, which are 1.3 mm and 3.5 mm to five digits,
+  and no other power of ten puts a via near a millimetre. Version 1.10 counts
+  whole mils - its boards run 135 to 7900 across, with 25 mil tracks and 65 mil
+  pads, which at 1/1000 mil would be a board eight thousandths of an inch wide.
+- **Continuation lines.** Tracks, arcs and fills are followed by a second
+  operand line in 2.70 and 2.80 and by nothing in 1.10. Rather than key that
+  to the version, the reader consumes a continuation only when the next line is
+  not itself a record tag.
+- **Pad layout.** 2.80 writes a 33-field padstack with a separate size for
+  top, middle and bottom. 1.10 writes 12 fields and one size for the whole
+  pad. The field count decides which is which.
 
 The output is the `Board` model of the `PCB FILE 9` reader, so the KiCad writer
 takes it unchanged.
@@ -35,15 +50,17 @@ from .pcb9 import (
     Arc, Board, Component, Fill, Net, Pad, Text, Track, Via,
 )
 
-SCALE = 1000.0          # stored units per mil
+SCALE = 1000.0          # stored units per mil, from version 2.70 onwards
+SCALE_V1 = 1.0          # version 1.10 counts whole mils
 
 
 class ParseError(Exception):
     pass
 
 
-def _n(tok: str) -> float:
-    return float(tok) / SCALE
+def scale_for(version: str) -> float:
+    """Stored units per mil, from the version in the header."""
+    return SCALE_V1 if version.startswith("PCB FILE 6 VERSION 1.") else SCALE
 
 
 class Reader:
@@ -70,8 +87,12 @@ def parse(path: Path) -> Board:
     version = r.line().strip()
     if not version.startswith("PCB FILE 6"):
         raise ParseError(f"unsupported header {version!r}")
+    scale = scale_for(version)
     header = [int(v) for v in r.nums()]
     board = Board(path, version, {"header": header})
+
+    def n(tok: str) -> float:
+        return float(tok) / scale
 
     current = None          # open COMP, or None
     comp_texts = 0          # strings seen inside the open component
@@ -89,6 +110,17 @@ def parse(path: Path) -> Board:
         board.errors.append((at, f"{type(exc).__name__}: {exc}"))
         while r.i < len(r.lines) and r.lines[r.i].strip() not in TAGS:
             r.i += 1
+
+    def cont() -> None:
+        """Swallow the continuation line a record may or may not have.
+
+        Version 1.10 writes none. Keying this to the version would break on the
+        first file that splits the difference, so the next line is examined
+        instead: a record tag on its own line is the start of the next record
+        and belongs to nobody.
+        """
+        if r.i < len(r.lines) and r.lines[r.i].strip() not in TAGS:
+            r.line()
 
     def sink(kind):
         """Where an object goes: into the open component, or onto the board."""
@@ -119,7 +151,7 @@ def parse(path: Path) -> Board:
               f = r.nums()
               comp_texts = 0
               current = Component(
-                  offset=at, footprint=name, x=_n(f[2]), y=_n(f[3]),
+                  offset=at, footprint=name, x=n(f[2]), y=n(f[3]),
                   bbox=(0.0, 0.0, 0.0, 0.0), mirror=int(f[4]) if len(f) > 4 else 0,
                   fields=tuple(f), rotation=float(f[11]) if len(f) > 11 else 0.0,
                   designator=None, comment=None)
@@ -127,24 +159,39 @@ def parse(path: Path) -> Board:
 
           elif tag in ("CT", "FT"):
               f = r.nums()
-              r.line()                                   # continuation
+              cont()
               sink(tag).append(Track(
-                  offset=at, kind="n", x1=_n(f[2]), y1=_n(f[3]),
-                  x2=_n(f[4]), y2=_n(f[5]), width=_n(f[6]), layer=int(f[7]),
+                  offset=at, kind="n", x1=n(f[2]), y1=n(f[3]),
+                  x2=n(f[4]), y2=n(f[5]), width=n(f[6]), layer=int(f[7]),
                   flag=0, tail=tuple(f[8:]),
                   net=int(f[9]) if len(f) > 9 else 0))
 
           elif tag in ("CP", "FP"):
               f = r.nums()
               name = r.line()
-              sink(tag).append(Pad(
-                  offset=at, x=_n(f[2]), y=_n(f[3]), name=name,
-                  layer=int(f[15]), hole=_n(f[13]),
-                  top=(_n(f[4]), _n(f[5]), int(f[6])),
-                  mid=(_n(f[7]), _n(f[8]), int(f[9])),
-                  bot=(_n(f[10]), _n(f[11]), int(f[12])),
-                  rotation=float(f[18]), raw_tail=tuple(f[19:]),
-                  net=int(f[16])))
+              if len(f) >= 19:
+                  # Padstack form: a separate size and shape for the top, the
+                  # middle and the bottom of the pad.
+                  pad = Pad(
+                      offset=at, x=n(f[2]), y=n(f[3]), name=name,
+                      layer=int(f[15]), hole=n(f[13]),
+                      top=(n(f[4]), n(f[5]), int(f[6])),
+                      mid=(n(f[7]), n(f[8]), int(f[9])),
+                      bot=(n(f[10]), n(f[11]), int(f[12])),
+                      rotation=float(f[18]), raw_tail=tuple(f[19:]),
+                      net=int(f[16]))
+              else:
+                  # Short form, version 1.10: one size for the whole pad. The
+                  # two trailing fields are zero on every pad measured, so
+                  # nothing is read from them - including the net, which this
+                  # vintage carries only in the node lists if at all.
+                  size = (n(f[4]), n(f[5]), int(f[6]))
+                  pad = Pad(
+                      offset=at, x=n(f[2]), y=n(f[3]), name=name,
+                      layer=int(f[9]), hole=n(f[7]),
+                      top=size, mid=size, bot=size,
+                      rotation=0.0, raw_tail=tuple(f[10:]), net=0)
+              sink(tag).append(pad)
 
           elif tag in ("CS", "FS"):
               f = r.nums()
@@ -156,7 +203,7 @@ def parse(path: Path) -> Board:
               # drawing would come out with a quadrant of empty space. Estimate
               # it from the stroke font instead - glyphs run about 0.6 of their
               # height - and let rotation decide which way it runs.
-              tx, ty, th = _n(f[2]), _n(f[3]), _n(f[4])
+              tx, ty, th = n(f[2]), n(f[3]), n(f[4])
               tw = 0.6 * th * len(body)
               rot = float(f[5]) % 360.0
               if 45.0 <= rot < 135.0 or 225.0 <= rot < 315.0:
@@ -166,7 +213,7 @@ def parse(path: Path) -> Board:
               text = Text(
                   offset=at, x=tx, y=ty, rotation=float(f[5]),
                   bbox=box, text=body, layer=int(f[8]),
-                  height=th, stroke=_n(f[13]) if len(f) > 13 else 0.0,
+                  height=th, stroke=n(f[13]) if len(f) > 13 else 0.0,
                   mirror=int(f[6]), f15=int(f[7]), f1d=0)
               # The first two strings inside a component are its designator and
               # its comment, in that order - the same two that `PCB FILE 9`
@@ -192,24 +239,24 @@ def parse(path: Path) -> Board:
 
           elif tag in ("CF", "FF"):
               f = r.nums()
-              r.line()
+              cont()
               sink(tag).append(Fill(
-                  offset=at, x1=_n(f[2]), y1=_n(f[3]),
-                  x2=_n(f[4]), y2=_n(f[5]), layer=int(f[6])))
+                  offset=at, x1=n(f[2]), y1=n(f[3]),
+                  x2=n(f[4]), y2=n(f[5]), layer=int(f[6])))
 
           elif tag in ("CA", "FA"):
               f = r.nums()
-              r.line()
+              cont()
               sink(tag).append(Arc(
-                  offset=at, x=_n(f[2]), y=_n(f[3]), radius=_n(f[4]),
-                  start=float(f[5]), end=float(f[6]), width=_n(f[7]),
+                  offset=at, x=n(f[2]), y=n(f[3]), radius=n(f[4]),
+                  start=float(f[5]), end=float(f[6]), width=n(f[7]),
                   layer=int(f[8]), tail=0))
 
           elif tag == "FV":
               f = r.nums()
               board.vias.append(Via(
-                  offset=at, x=_n(f[2]), y=_n(f[3]), diameter=_n(f[4]),
-                  hole=_n(f[5]), flag=0, raw_tail=tuple(f[6:]),
+                  offset=at, x=n(f[2]), y=n(f[3]), diameter=n(f[4]),
+                  hole=n(f[5]), flag=0, raw_tail=tuple(f[6:]),
                   net=int(f[8]) if len(f) > 8 else 0))
 
           elif tag == "NETDEF":
@@ -232,7 +279,7 @@ def parse(path: Path) -> Board:
               tail = tuple(r.nums()) + tuple(r.nums())
               board.nets.append(Net(
                   offset=at, index=len(board.nets), name=name,
-                  track_width=_n(f[0]), via_size=_n(f[1]),
+                  track_width=n(f[0]), via_size=n(f[1]),
                   f1=int(f[2]), f2=int(f[3]),
                   members=members, connections=connections, tail=tail))
 
