@@ -1,9 +1,12 @@
-# Protel `PCB FILE 9 VERSION 2.70` - binary format specification
+# Protel `PCB FILE 9` - binary format specification
 
-The native board file of Protel for Windows (Protel 98 / Protel 99 SE, the
-predecessor of Altium Designer). The identifier appears in no published
-specification; everything below comes from reverse engineering against
-Protel's own ASCII v2.70 export of the same boards.
+The native board file of Protel for Windows and Advanced PCB, the line that
+became Altium Designer. Three vintages exist and all three are decoded: `2.00`
+and `2.60` from Advanced PCB 2.x, and `2.70` from Protel for Windows 2.8. The
+identifier appears in no published specification; everything below describes
+`2.70` and comes from reverse engineering against Protel's own ASCII v2.70
+export of the same boards. Section 10 gives the differences in the two earlier
+vintages.
 
 **Status (verified 2026-09-13).** The decoder in `src/protel99_parser/pcb9.py`
 reproduces the ASCII v2.70 export of two reference boards to the last digit:
@@ -312,9 +315,12 @@ bookkeeping - use the tags. Connections (4 x `u16`) are not decoded.
 | `05` | 4 | via diameter | via |
 | `06` | 4 | via hole | via |
 | `07` | 2 | via flag, 1 | via |
+| `09` `0A` | 4 | pad size X, Y, one for every side (2.00 only) | pad |
 | `0C` | 4 | pad hole | pad |
+| `0D` | 2 | not interpreted | pad |
 | `0E` | 4 | pad X | pad |
 | `0F` | 4 | pad Y | pad |
+| `10` | 2 | not interpreted (2.00 only) | pad |
 | `12` | 4 | text height | text |
 | `13` | 4 | text stroke width | text |
 | `14` | 2 | text mirror | text |
@@ -326,8 +332,9 @@ bookkeeping - use the tags. Connections (4 x `u16`) are not decoded.
 | `1D` | 2 | text, value 1 | text |
 
 An unknown tag stops the decoder with its offset unless its length can be
-inferred from the bytes that follow. Across 1178 archive boards no tag
-outside this table occurs.
+inferred from the bytes that follow - whichever length leaves an `A1` or `A3`
+at the right place, looking past block filler. Across 1178 archive boards and
+the 16 demo boards of the three vintages, no tag outside this table occurs.
 
 ---
 
@@ -362,6 +369,7 @@ Protel numbering as it appears in the file and in the ASCII export:
   gerber shows some designators and not others (board E, board G) the
   fields are identical for both groups.
 - The 11-`u16` pad tail and 5-`u16` via tail beyond their constant values.
+  Neither exists before 2.70, so neither carries geometry.
 - Text attributes `15`, `16`, `1D`; text visibility. Protel's silkscreen
   plots in this archive show the comments and, on most boards, no
   designators at all, and draw some texts of components about one text
@@ -417,6 +425,54 @@ no export of any kind: 1170 parse clean with zero count mismatches and zero
 unknown tags, 8 are damaged at byte level and are read in salvage mode, which
 reports every resynchronisation with its offset.
 
+---
+
+## 10. The vintages before 2.70
+
+`2.00` and `2.60` are the same stream: same markers, same section grammar, same
+attribute tags, same coordinate encoding, same 4 KiB block filler. What changed
+is the width of five records.
+
+| Record | 2.00 | 2.60 | 2.70 |
+|---|---|---|---|
+| Component, after the bounding box | `u16` mirror + 2 `u16` | `u16` mirror + 2 `u16` | `u16` mirror + 4 `u16` + rotation string |
+| Pad, after the attributes | 1 `u16` shape, name | 3 `u16` shapes, name | 3 `u16` shapes, rotation string, 11 `u16`, name |
+| Track, after the coordinates | 1 `u16` | 1 `u16` | 2 `u16` |
+| Via, after the coordinates | 1 `u16` | 1 `u16` | 5 `u16` |
+| Net, after `}` | nothing | 4 `u16` | 7 `u16` |
+
+Two attributes move with the pad record. `2.00` has **one pad size for every
+copper side**, in `0x09` (X) and `0x0A` (Y); the padstack of `0x17` to `0x1C`
+arrives with `2.60`. Text stroke width, attribute `0x13`, is not written before
+`2.70` at all, and neither is `0x1D`.
+
+The board boundary is the closed rectangle on layer 28, the keep-out layer:
+Advanced PCB 2.x has no board layer. From `2.70` the boundary is on layer 29 and
+layer 28 carries a keep-out rectangle inside it.
+
+Two pad attributes are written but not interpreted: `0x0D` (2 bytes, `2.70` and
+`2.00`) and `0x10` (2 bytes, `2.00`). Both are kept in the attribute state so
+the stream stays in step.
+
+**How this was established.** The demo boards shipped with Advanced PCB 2.6 and
+again with Protel for Windows 2.8, so the same design exists in two vintages and
+the markers can be walked in both. Then two witnesses:
+
+- **The 2.70 decoder**, which is verified against Protel's own export. Allowing
+  the single translation the re-save applied, 580 of 586 components and 6272 of
+  6352 pads decode identically to 0.001 mil. The six components that differ
+  moved by a round 10 or 100 mil and carried their whole footprint with them,
+  which is an edit between releases.
+- **Each file's own header.** All nine `2.60` and `2.00` boards collected agree
+  with their stored counts on components, tracks, arcs, vias, fills, pads and
+  nets, with no salvaged records and no unknown attributes.
+
+None of the nine carries a fill, a free text or a polygon, so those three
+records are read with the 2.70 layout on the assumption that they are unchanged.
+That assumption is untested.
+
+---
+
 ### Unit tests
 
 `tests/test_pcb9.py` covers the stream primitives and, when reference boards are
@@ -428,4 +484,4 @@ pip install -e .
 pytest
 ```
 
-Last verified: 2026-09-14.
+Last verified: 2026-09-14, and 2026-09-18 for section 10.

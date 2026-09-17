@@ -226,16 +226,17 @@ def test_scale_is_chosen_from_the_version():
 # --------------------------------------------------------------------------
 
 def test_unreadable_pcb9_vintage_is_unsupported_not_a_traceback(tmp_path):
-    """`PCB FILE 9 VERSION 2.60` is detected as pcb9 and refused by the reader.
+    """A `PCB FILE 9` vintage with no layout is detected as pcb9 and refused.
 
     The caller needs one answer for "recognised, not decoded" whether that
     verdict came from the format table or from the reader's header check.
+    2.00, 2.60 and 2.70 are decoded; a later one would land here.
     """
-    p = write(tmp_path, "b.pcb", b"\x17\xa1PCB FILE 9 VERSION 2.60" + b"\x00" * 40)
+    p = write(tmp_path, "b.pcb", b"\x17\xa1PCB FILE 9 VERSION 3.50" + b"\x00" * 40)
     assert formats.identify(p).key == "pcb9"
     with pytest.raises(formats.UnsupportedFormat) as e:
         formats.parse(p)
-    assert "2.60" in str(e.value)
+    assert "3.50" in str(e.value)
 
 
 # --------------------------------------------------------------------------

@@ -43,6 +43,8 @@ SCALE = 65536.0 / 10000.0
 # enumerations and flags are 2 bytes. Meanings from matching the ASCII export.
 TAG_LEN = {
     0x00: 2,   # pad/track flag, values 1 and 256 seen (archive boards)
+    0x09: 4,   # pad size X, version 2.00 only (one size for every layer)
+    0x0A: 4,   # pad size Y, version 2.00 only
     0x01: 2,   # layer
     0x02: 2,   # net index (varies per pad on boards that carry nets)
     0x03: 4,   # track width
@@ -51,6 +53,8 @@ TAG_LEN = {
     0x06: 4,   # via hole
     0x07: 2,   # via flag (ASCII field after hole, value 1)
     0x0C: 4,   # pad hole
+    0x0D: 2,   # pad attribute, meaning not determined; 2.70 and 2.00 write it
+    0x10: 2,   # pad attribute, meaning not determined; 2.00 writes it
     0x0E: 4,   # pad X
     0x0F: 4,   # pad Y
     0x12: 4,   # text height
@@ -65,6 +69,53 @@ TAG_LEN = {
     0x1B: 4,   # pad bottom size X
     0x1C: 4,   # pad bottom size Y
     0x1D: 2,   # text field (ASCII trailing value 1)
+}
+
+@dataclass(frozen=True)
+class Layout:
+    """How wide each record is in one vintage of the format.
+
+    The stream, its markers, its attributes and its coordinate encoding are the
+    same in every vintage. What changed between Advanced PCB 2.x and Protel for
+    Windows 2.8 is the size of some records: 2.70 added a rotation to
+    components and pads, and carries more trailing `u16` on components, pads,
+    tracks, vias and nets. Everything here was measured by walking the markers
+    of the demo boards that ship in both vintages - see `docs/FORMAT.md`.
+    """
+    version: str
+    component_fields: int       # u16 after the bounding box, mirror included
+    component_rotation: bool
+    pad_rotation: bool
+    pad_tail: int
+    track_tail: int
+    via_tail: int
+    net_tail: int
+    padstack: bool = True       # a size per copper side, or one size for all
+    outline_layer: int = 29     # Protel layer the board boundary is drawn on
+
+
+V270 = Layout("2.70", component_fields=5, component_rotation=True,
+              pad_rotation=True, pad_tail=11, track_tail=2, via_tail=5, net_tail=7)
+
+# Advanced PCB 2.x has no board layer: the boundary is the rectangle on the
+# keep-out layer, 28. Protel for Windows added layer 29 and draws both.
+
+# Advanced PCB 2.6 writes the same records without the rotations and with
+# shorter tails.
+V260 = Layout("2.60", component_fields=3, component_rotation=False,
+              pad_rotation=False, pad_tail=0, track_tail=1, via_tail=1, net_tail=4,
+              outline_layer=28)
+
+# Advanced PCB 2.0 is 2.6 with one pad size for every layer, in tags 0x09 and
+# 0x0A, and one shape rather than three. The padstack arrived with 2.6.
+V200 = Layout("2.00", component_fields=3, component_rotation=False,
+              pad_rotation=False, pad_tail=0, track_tail=1, via_tail=1, net_tail=0,
+              padstack=False, outline_layer=28)
+
+LAYOUTS = {
+    "PCB FILE 9 VERSION 2.70": V270,
+    "PCB FILE 9 VERSION 2.60": V260,
+    "PCB FILE 9 VERSION 2.00": V200,
 }
 
 COMP_MARKERS = {b"M", b"E", b"a", b"f", b"p", b"x", b"th", b"tv", b"t+", b"t-", b"tn", b"v"}
@@ -233,6 +284,9 @@ class Board:
     end_offset: int = 0
     unknown_tags: dict = field(default_factory=dict)
     filler_skips: int = 0
+    # Set by a reader that knows more about the boundary than its format entry
+    # does - `PCB FILE 9` draws it on a different layer in different vintages.
+    outline_layer: int | None = None
 
 
 BLOCK = 4096
@@ -240,8 +294,9 @@ FILLER = b"\x00\xa0"
 
 
 class Stream:
-    def __init__(self, data: bytes):
+    def __init__(self, data: bytes, layout: Layout = V270):
         self.data = data
+        self.layout = layout
         self.pos = 0
         self.state: dict[int, bytes] = {}
         self.unknown_tags: dict[int, int] = {}
@@ -383,10 +438,26 @@ class Stream:
             self.pos += 2 + n
 
     def _guess_tag_len(self, tag: int) -> int:
+        """Length of an attribute this reader has never seen, from what follows it.
+
+        A tagged attribute is followed by another attribute, a string or a
+        record field. Only the first two are recognisable, so the guess is:
+        whichever length leaves an `A1` or `A3` marker byte at the right place.
+        Block filler can sit between the attribute and whatever follows, so the
+        probe looks past it.
+        """
         d = self.data
         p = self.pos
-        after2 = d[p + 5] if p + 5 < len(d) else None
-        after4 = d[p + 7] if p + 7 < len(d) else None
+
+        def after(n: int):
+            at = p + 2 + n
+            block_left = BLOCK - (at % BLOCK)
+            if block_left % 2 == 0 and d[at:at + block_left] == FILLER * (block_left // 2):
+                at += block_left
+            return d[at + 1] if at + 1 < len(d) else None
+
+        after2 = after(2)
+        after4 = after(4)
         if after2 in (0xA1, 0xA3) and after4 not in (0xA1, 0xA3):
             return 2
         if after4 in (0xA1, 0xA3) and after2 not in (0xA1, 0xA3):
@@ -423,15 +494,23 @@ def parse_text(s: Stream) -> Text:
 def parse_pad(s: Stream) -> Pad:
     off = s.pos
     s.tags()
-    sh_top, sh_mid, sh_bot = s.u16(), s.u16(), s.u16()
-    rot = s.float_str()
-    tail = tuple(s.u16() for _ in range(11))
+    if s.layout.padstack:
+        shapes = (s.u16(), s.u16(), s.u16())
+    else:
+        shapes = (s.u16(),) * 3
+    rot = s.float_str() if s.layout.pad_rotation else 0.0
+    tail = tuple(s.u16() for _ in range(s.layout.pad_tail))
     name = s.string()
+    if s.layout.padstack:
+        sizes = ((s.st_dim(0x17), s.st_dim(0x18)), (s.st_dim(0x19), s.st_dim(0x1A)),
+                 (s.st_dim(0x1B), s.st_dim(0x1C)))
+    else:
+        sizes = ((s.st_dim(0x09), s.st_dim(0x0A)),) * 3
     return Pad(off, s.st_dim(0x0E), s.st_dim(0x0F), name, layer=s.st_u16(0x01),
                hole=s.st_dim(0x0C),
-               top=(s.st_dim(0x17), s.st_dim(0x18), sh_top),
-               mid=(s.st_dim(0x19), s.st_dim(0x1A), sh_mid),
-               bot=(s.st_dim(0x1B), s.st_dim(0x1C), sh_bot),
+               top=sizes[0] + (shapes[0],),
+               mid=sizes[1] + (shapes[1],),
+               bot=sizes[2] + (shapes[2],),
                rotation=rot, raw_tail=tail, net=s.st_u16(0x02))
 
 
@@ -450,7 +529,7 @@ def parse_track(s: Stream, kind: str) -> Track:
         y2 = y1 + length if kind == "+" else y1 - length
     else:
         x1, y1, x2, y2 = s.dim(), s.dim(), s.dim(), s.dim()
-    tail = (s.u16(), s.u16())
+    tail = tuple(s.u16() for _ in range(s.layout.track_tail))
     return Track(off, kind, x1, y1, x2, y2, width=s.st_dim(0x03), layer=s.st_u16(0x01),
                  flag=s.st_u16(0x04), tail=tail, net=s.st_u16(0x02))
 
@@ -459,7 +538,7 @@ def parse_via(s: Stream) -> Via:
     off = s.pos
     s.tags()
     x, y = s.dim(), s.dim()
-    tail = tuple(s.u16() for _ in range(5))
+    tail = tuple(s.u16() for _ in range(s.layout.via_tail))
     return Via(off, x, y, diameter=s.st_dim(0x05), hole=s.st_dim(0x06),
                flag=s.st_u16(0x07), raw_tail=tail, net=s.st_u16(0x02))
 
@@ -501,7 +580,7 @@ def parse_net(s: Stream, index: int) -> Net:
     while s.peek_marker() != b"}":
         conns.append(tuple(s.u16() for _ in range(4)))
     s.expect(b"}")
-    tail = tuple(s.u16() for _ in range(7))
+    tail = tuple(s.u16() for _ in range(s.layout.net_tail))
     return Net(off, index, name, width, via, f1, f2, members, conns, tail)
 
 
@@ -546,11 +625,19 @@ def parse_component(s: Stream) -> Component:
     x, y = s.dim(), s.dim()
     bbox = (s.dim(), s.dim(), s.dim(), s.dim())
     mirror = s.u16()
-    f1, f2, f3, f4 = s.u16(), s.i16(), s.u16(), s.u16()
-    rot = s.float_str()
+    if s.layout.component_rotation:
+        fields = (s.u16(), s.i16(), s.u16(), s.u16())
+        rot = s.float_str()
+    else:
+        # Advanced PCB 2.x places components on the 90-degree steps its own
+        # user interface offered, and stores no rotation field. The footprint
+        # geometry that follows is already placed, so a zero here is the truth
+        # about the file rather than a missing value.
+        fields = tuple(s.u16() for _ in range(s.layout.component_fields - 1))
+        rot = 0.0
     desig = parse_text(s)
     comment = parse_text(s)
-    c = Component(off, footprint, x, y, bbox, mirror, (z0, f1, f2, f3, f4), rot, desig, comment)
+    c = Component(off, footprint, x, y, bbox, mirror, (z0,) + fields, rot, desig, comment)
     c.arcs = parse_section(s, b"a", parse_arc)
     c.fills = parse_section(s, b"f", parse_fill)
     c.pads = parse_section(s, b"p", parse_pad)
@@ -566,15 +653,12 @@ def parse(path: Path, strict: bool = False) -> Board:
     data = path.read_bytes()
     s = Stream(data)
     version = s.string()
-    if not version.startswith("PCB FILE 9 VERSION 2.70"):
-        # 2.00 and 2.60 exist and are not this format in the parts that matter.
-        # Their tracks and vias decode with this reader, but the component and
-        # text records carry two fields fewer and no rotation, so everything
-        # after the first component desynchronises. Refusing is the honest
-        # answer until those records are decoded; see docs/COMPATIBILITY.md.
+    layout = LAYOUTS.get(version.strip())
+    if layout is None:
         raise ParseError(
             f"unsupported header {version!r} - this reader decodes "
-            f"PCB FILE 9 VERSION 2.70")
+            + ", ".join(sorted(LAYOUTS)))
+    s.layout = layout
     h0 = s.u16()
     raw_counts = [s.u32() for _ in range(9)]
     h_last = s.u16()
@@ -586,7 +670,7 @@ def parse(path: Path, strict: bool = False) -> Board:
         "vias": raw_counts[5], "components": raw_counts[6], "fills": raw_counts[7],
         "pads": raw_counts[8], "last": h_last,
     }
-    board = Board(path, version, counts)
+    board = Board(path, version, counts, outline_layer=layout.outline_layer)
 
     def resync(err: Exception, wanted: set) -> bool:
         """Salvage mode: log the error and jump to the next wanted marker."""

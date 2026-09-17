@@ -609,13 +609,27 @@ def generate(b: pcb9.Board, outline_layer: int) -> tuple[str, dict]:
 HEADER9 = b"PCB FILE 9 VERSION 2.70"
 
 
+def outline_of(b: pcb9.Board, fmt, override: int | None) -> int:
+    """Which Protel layer carries the board boundary.
+
+    A command-line flag wins. Failing that, a reader that read the file's own
+    vintage knows better than the format entry, which can only speak for the
+    family: `PCB FILE 9` draws the boundary on layer 29 from Protel for
+    Windows onwards and on the keep-out layer, 28, before that.
+    """
+    if override is not None:
+        return override
+    return b.outline_layer if getattr(b, "outline_layer", None) else fmt.outline_layer
+
+
 def convert(binary: Path, output: Path, outline_layer: int | None = None,
             quiet: bool = True, document: str | None = None) -> dict:
     """Convert one board in any supported Protel format.
 
-    `outline_layer` defaults to whatever the detected format uses, because the
-    generations disagree: 29 in `PCB FILE 9`, 28 in `PCB FILE 6`. Passing a
-    number overrides that for boards that break the habit.
+    `outline_layer` defaults to whatever the file itself uses, because the
+    generations disagree: 29 in `PCB FILE 9` from Protel for Windows onwards,
+    28 before that and in `PCB FILE 6`. Passing a number overrides that for
+    boards that break the habit.
 
     `document` picks one board out of a `.ddb`, which holds a whole project
     rather than a single layout. Without it the largest board in the database
@@ -627,8 +641,7 @@ def convert(binary: Path, output: Path, outline_layer: int | None = None,
         fmt = formats.identify(binary)
     else:
         b, fmt = formats.parse(binary)
-    text, stats = generate(b, fmt.outline_layer if outline_layer is None
-                           else outline_layer)
+    text, stats = generate(b, outline_of(b, fmt, outline_layer))
     stats["format"] = fmt.label
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(text, encoding="utf-8")
@@ -676,8 +689,7 @@ def batch(in_dir: Path, out_dir: Path, outline_layer: int | None = None) -> int:
                 target = (out_dir / p.relative_to(in_dir)
                           .with_suffix("")).with_name(
                               p.stem + suffix + ".kicad_pcb")
-                text, stats = generate(b, fmt.outline_layer if outline_layer is None
-                                       else outline_layer)
+                text, stats = generate(b, outline_of(b, fmt, outline_layer))
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text(text, encoding="utf-8")
                 done += 1

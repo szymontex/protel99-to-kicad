@@ -8,18 +8,18 @@ them all the same `.PCB` extension, so the extension tells you nothing. This
 package reads the header, picks the right decoder, and writes a KiCad 9
 `.kicad_pcb` with components, copper tracks, vias, arcs, fills, text, nets and
 the board outline - **from the board file alone**, with no footprint library
-and no ASCII export. Six generations of the format go in and one KiCad board
+and no ASCII export. Eight generations of the format go in and one KiCad board
 comes out; the writer is never told which one it was handed.
 
 | Your file says | Written by | Status |
 |---|---|---|
 | `PCB FILE 4` | Protel Autotrax | **converts** |
 | `PCB FILE 5` | Protel Easytrax | **converts** |
-| `PCB FILE 9 VERSION 2.70` | Protel for Windows / Advanced PCB | **converts** |
+| `PCB FILE 9 VERSION 2.70` | Protel for Windows 2.8 | **converts** |
+| `PCB FILE 9 VERSION 2.60` / `2.00` | Protel Advanced PCB 2.x | **converts** |
 | `PCB FILE 6 VERSION 1.10` / `2.70` / `2.80` | Protel PCB ASCII export | **converts** |
 | `\|RECORD=Board\|...` | Protel 98 / 99 / 99 SE, saved as PCB ASCII | **converts** |
 | `.ddb` design database | Protel 99 / 99 SE | **converts** the boards inside it this package can read |
-| `PCB FILE 9 VERSION 2.00` / `2.60` | Protel for Windows 2.x | recognised, not decoded |
 | `PCB 4.0 Binary File` | Protel 98 / 99 / 99 SE | recognised, not decoded - [save it as PCB ASCII](docs/COMPATIBILITY.md#protel-pcb-ascii---the-way-out-of-the-binary) |
 | `PCB 3.0 Binary File`, `DOS 3 PCB` | Protel Advanced PCB 3, Protel for DOS | recognised, not decoded |
 | `.PcbDoc` | Altium Designer | use KiCad's own importer - [how](docs/COMPATIBILITY.md#altium-pcbdoc---use-kicad-directly) |
@@ -96,8 +96,8 @@ to do about it. Detail: [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md#ddb-design
 
 ## Why this exists
 
-`PCB FILE 9 VERSION 2.70` is a binary board format from the Protel for Windows
-and Advanced PCB generation - the line that became Altium Designer. It was
+`PCB FILE 9` is a binary board format from the Protel for Windows and Advanced
+PCB generation - the line that became Altium Designer. It was
 abandoned around 2003 and **no current tool reads it** - not Altium Designer,
 not `protel2kicad`, not KiCad. The identifier appears in no published Protel
 specification: the vendor documented the ASCII formats and stopped there.
@@ -115,8 +115,9 @@ save as PCB ASCII, convert that.
 
 ## Accuracy
 
-`PCB FILE 9` is checked against three witnesses, none written by the code being
-checked. All measured 2026-09-14; commands in [`docs/FORMAT.md`](docs/FORMAT.md).
+`PCB FILE 9` is checked against witnesses none of which were written by the
+code being checked. Measured 2026-09-14, and 2026-09-18 for the vintages before
+2.70; commands in [`docs/FORMAT.md`](docs/FORMAT.md).
 
 **Protel's own ASCII v2.70 export** of two boards, all objects compared one to
 one, in mils: components, pads (position and the size on each copper side),
@@ -135,6 +136,17 @@ of any kind: 1170 parse clean with zero count mismatches and zero unknown tags;
 8 are damaged at byte level and are read in salvage mode, which reports every
 resynchronisation with its offset.
 
+**The decode of the vintage after them**, for `2.60` and `2.00`. Six demo
+boards were shipped with Advanced PCB 2.6 and again with Protel for Windows
+2.8, so the same design can be read by the new decoder and by the one already
+checked against Protel's own export, and the two results compared. Allowing the
+single translation the re-save applied, **580 of 586 components and 6272 of
+6352 pads are identical to 0.001 mil**. The six components that differ each
+moved by a round 10 or 100 mil and carried their whole footprint with them,
+which is an edit to the demo between releases rather than a disagreement
+between decoders. All nine `2.60` and `2.00` boards also agree with their own
+header on every object class.
+
 **The gerbers Autotrax itself plotted**, for two boards published with their
 gerber sets: the pad and via breakdown predicts 49 and 138 flashes per copper
 layer, the gerbers hold 49 and 138, and every flash lands within 0.000 mil of a
@@ -142,16 +154,17 @@ pad or via once the plot's own origin and mirror are taken out. On the board
 whose gerber is RS-274X the declared aperture diameters are the pad sizes in the
 board file to the digit.
 
-**Boards published by other people.** 140 boards collected from vendor
+**Boards published by other people.** 160 boards collected from vendor
 installers on archive.org and from 35 unrelated GitHub repositories, none of
 them written by anyone involved here, were converted and then drawn by
-`kicad-cli` from the converted file (measured 2026-09-17):
+`kicad-cli` from the converted file (measured 2026-09-18):
 
 | Format | Boards | Clean | Salvaged | Failed |
 |---|---|---|---|---|
-| `PCB FILE 4` / `PCB FILE 5` | 95 | 95 | 0 | 0 |
+| `PCB FILE 4` / `PCB FILE 5` | 106 | 106 | 0 | 0 |
 | `PCB FILE 6` (1.10 and 2.80) | 21 | 21 | 0 | 0 |
-| `PCB FILE 9 VERSION 2.70` | 7 | 6 | 1 | 0 |
+| `PCB FILE 9 VERSION 2.70` | 7 | 7 | 0 | 0 |
+| `PCB FILE 9 VERSION 2.60` / `2.00` | 9 | 9 | 0 | 0 |
 | `.ddb` design databases | 16 | 6 | 10 | 0 |
 | Protel PCB ASCII | 1 | 1 | 0 | 0 |
 

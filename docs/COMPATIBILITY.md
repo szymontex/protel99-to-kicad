@@ -15,10 +15,10 @@ This page is kept current. If you have a file that is not covered, see
 | `PCB FILE 4` | Protel Autotrax | `protel-to-kicad` (this package) | **Full** |
 | `PCB FILE 5` | Protel Easytrax | `protel-to-kicad` (this package) | **Full** |
 | `PCB FILE 6 VERSION 1.10` / `2.70` / `2.80` | Protel PCB ASCII export | `protel-to-kicad` (this package) | **Full** |
-| `PCB FILE 9 VERSION 2.70` | Protel for Windows / Advanced PCB | `protel-to-kicad` (this package) | **Full** |
+| `PCB FILE 9 VERSION 2.70` | Protel for Windows 2.8 | `protel-to-kicad` (this package) | **Full** |
+| `PCB FILE 9 VERSION 2.60` / `2.00` | Protel Advanced PCB 2.x | `protel-to-kicad` (this package) | **Full** |
 | `\|RECORD=Board\|...` | Protel 98 / 99 / 99 SE, saved as PCB ASCII | `protel-to-kicad` (this package) | **Full** |
 | `.ddb` design database | Protel 99 / 99 SE | `protel-to-kicad` (this package) | **Partial** - text documents only |
-| `PCB FILE 9 VERSION 2.00` / `2.60` | Protel for Windows 2.x | nothing yet | Recognised, records differ |
 | `PCB 4.0 Binary File` | Protel 98 / 99 / 99 SE | [save it as PCB ASCII](#protel-pcb-ascii---the-way-out-of-the-binary) | Recognised, not decoded |
 | `PCB 3.0 Binary File` | Protel Advanced PCB 3 | nothing yet | Recognised, not decoded |
 | `DOS 3 PCB` | Protel PCB for DOS | nothing yet | Recognised, not decoded |
@@ -164,7 +164,7 @@ pads 137795, which are 1.3 mm and 3.5 mm to five digits, and no other power of
 ten puts a via near a millimetre. If you have a `PCB FILE 6` board **with** its
 gerbers, that would settle it - see below.
 
-### `PCB FILE 9 VERSION 2.70` - Protel for Windows / Advanced PCB
+### `PCB FILE 9` - Protel for Windows and Advanced PCB
 
 **Status: full.** Binary. Reads components with their own pad geometry, copper
 on all layers, vias, arcs, fills, text, nets and the board outline. No
@@ -183,10 +183,55 @@ Verified against four independent witnesses:
 | KiCad's `pcbnew` loader reading the result back | positions within 0.0003 mil |
 | The file's own object counters, 1178-board archive | 1170 clean, 8 salvaged from byte-level damage |
 
-Board outline: Protel layer 29 (Mechanical 1).
+Board outline: Protel layer 29 (Mechanical 1) from 2.70 onwards. Advanced PCB
+2.x has no board layer and draws the boundary on the keep-out layer, 28; the
+reader reports which one the file it read uses, so a caller does not have to
+know the vintage. `--outline-layer` still overrides.
 
-The seven demo boards in the Protel for Windows 2.8 installer convert as well:
-6 clean, 1 salvaged, the largest carrying 1128 components and 27007 tracks.
+The seven demo boards in the Protel for Windows 2.8 installer convert as well,
+all seven clean, the largest carrying 1128 components and 27007 tracks.
+
+#### The vintages before 2.70
+
+`2.60` and `2.00` are the same stream with shorter records. Measured by walking
+the markers of boards that exist in more than one vintage:
+
+| Record | 2.70 | 2.60 | 2.00 |
+|---|---|---|---|
+| Component, `u16` after the bounding box | 5 then a rotation string | 3, no rotation | 3, no rotation |
+| Pad | a size per copper side, a rotation, 11 trailing `u16` | a size per copper side, no rotation, no tail | **one size for every side**, no rotation, no tail |
+| Track, trailing `u16` | 2 | 1 | 1 |
+| Via, trailing `u16` | 5 | 1 | 1 |
+| Net, trailing `u16` | 7 | 4 | 0 |
+| Text stroke width | attribute `0x13` | not stored | not stored |
+| Board boundary | layer 29 | layer 28 | layer 28 |
+
+Everything else - the markers, the section grammar, the attribute tags, the
+coordinate encoding, the 4 KiB block filler - is unchanged, except that 2.00
+puts the single pad size in attributes `0x09` and `0x0A` where the later
+vintages use `0x17` to `0x1C`.
+
+A text in 2.60 and 2.00 carries no stroke width, so the writer falls back to
+0.15 of the text height. That is a drawing choice, not a value read from the
+file: across the 2.70 boards the ratio Protel actually stored runs from 0.10 to
+0.192, so no single number would be the truth.
+
+Verified two ways, both on material this package did not write:
+
+- **Against the 2.70 decoder.** Six demo boards shipped with Advanced PCB 2.6
+  and again with Protel for Windows 2.8. Allowing the single translation the
+  re-save applied, 580 of 586 components and 6272 of 6352 pads are identical to
+  0.001 mil. The six components that differ moved by a round 10 or 100 mil
+  between releases and carried their whole footprint with them.
+- **Against each file's own header.** All nine `2.60` and `2.00` boards
+  collected agree with their stored counts on components, tracks, arcs, vias,
+  fills, pads and nets, with no salvaged records and no unknown attributes.
+
+What is **not** checked: none of the nine boards contains a fill, a free text or
+a polygon, so those three records are read with the 2.70 layout on the
+assumption that they did not change either. Every record that any sample
+exercises is measured; these three are inference. A board of these vintages
+carrying one would be worth sending in.
 
 ### Protel PCB ASCII - the way out of the binary
 
@@ -291,21 +336,6 @@ Schematics are out of scope for this package, which converts boards.
 
 These are identified by header, named in error messages, and skipped by batch
 runs with a count rather than in silence.
-
-### `PCB FILE 9 VERSION 2.00` and `2.60`
-
-**Status: recognised, records differ.** These are the same serialisation stream
-as 2.70 in the parts that carry copper - relaxing the version check reads their
-tracks and vias at plausible counts, 7323 against 7362 on one board that exists
-in both vintages - but the component and text records carry two fields fewer
-and no rotation string, so everything after the first component
-desynchronises. The reader refuses rather than producing a board with no
-components in it.
-
-This is the most tractable undecoded format here, because **the same demo
-boards ship in both 2.60 and 2.70**: the Protel 2.04 and Protel for Windows 2.8
-install sets are both on archive.org. A field that moved can be found by
-comparing one against the other rather than by guessing.
 
 ### `PCB 4.0 Binary File` - Protel 98 / 99 / 99 SE
 
