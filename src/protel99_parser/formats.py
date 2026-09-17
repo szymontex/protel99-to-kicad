@@ -68,15 +68,18 @@ def _read9(path: Path):
 # before `PCB 4.0 Binary File` or the library matches the board's prefix.
 FORMATS: tuple = (
     # Outline layer is a property of the generation, not of the board: every
-    # PCB FILE 9 file in the archives measured draws it on 29 (Mechanical 1)
-    # and every PCB FILE 6 file on 28 (Keep-Out). `--outline-layer` overrides.
+    # PCB FILE 9 file from version 2.70 onwards draws it on 29 (Mechanical 1)
+    # and every PCB FILE 6 file on 28 (Keep-Out). Advanced PCB 2.x has no board
+    # layer and uses 28, which the pcb9 reader reports per file because one
+    # entry here cannot speak for three vintages. `--outline-layer` overrides.
     # Product attributions were corrected on 2026-09-17 against material the
     # vendors themselves shipped: `PCB FILE 9 VERSION 2.70` is what the Protel
     # for Windows 2.8 installer of 1995 carries its demo boards in, four years
     # before Protel 99 SE, and no `.ddb` written by 99 SE contains the string
     # at all. `PCB FILE 6` is not a product's native format but Protel's text
     # export, which the vendor reference calls PCB ASCII 2.8.
-    Format("pcb9", "PCB FILE 9 VERSION 2.70", "Protel for Windows / Advanced PCB",
+    Format("pcb9", "PCB FILE 9 VERSION 2.00 / 2.60 / 2.70",
+           "Protel for Windows / Advanced PCB",
            b"PCB FILE 9", False, _read9, outline_layer=29),
     Format("pcb6", "PCB FILE 6 VERSION 2.80", "Protel PCB ASCII 2.8 export",
            b"PCB FILE 6", True, _read6, outline_layer=28),

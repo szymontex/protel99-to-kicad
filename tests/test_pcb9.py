@@ -1,5 +1,6 @@
-"""Native `PCB FILE 9 VERSION 2.70` decoder (pcb9) - stream primitives on
-synthetic bytes, plus a full-board check when the reference boards are present.
+"""Native `PCB FILE 9` decoder (pcb9) - stream primitives and the record
+layouts of every vintage on synthetic bytes, plus a full-board check when the
+reference boards are present.
 """
 import os
 import re
@@ -14,6 +15,19 @@ from protel99_parser import pcb9
 def dim_bytes(mil: float) -> bytes:
     q = round(mil * 10000)
     return struct.pack("<HH", q >> 16, q & 0xFFFF)
+
+
+def tag(number: int, data: bytes) -> bytes:
+    return bytes([number, 0xA3]) + data
+
+
+def u16(value: int) -> bytes:
+    return struct.pack("<H", value)
+
+
+def pstring(text: str) -> bytes:
+    raw = text.encode("latin-1")
+    return bytes([len(raw), 0xA1]) + raw + (b"\x00" if len(raw) & 1 else b"")
 
 
 class TestPrimitives:
@@ -52,6 +66,104 @@ class TestPrimitives:
         assert isinstance(value, float)
         assert len(s.errors) == 1
         assert s.peek_marker() == b"th"
+
+
+class TestVintages:
+    """Advanced PCB 2.0 and 2.6 write the same stream with shorter records.
+
+    Every figure here was measured by walking the markers of the demo boards
+    that ship in both an Advanced PCB and a Protel for Windows vintage, and is
+    confirmed by each file's own header counts: a record one field too short or
+    too long desynchronises the stream and the counts stop matching.
+    """
+
+    def test_a_pad_before_270_ends_at_its_name_with_no_rotation(self):
+        data = (tag(0x17, dim_bytes(50)) + tag(0x18, dim_bytes(60))
+                + tag(0x19, dim_bytes(50)) + tag(0x1A, dim_bytes(60))
+                + tag(0x1B, dim_bytes(52)) + tag(0x1C, dim_bytes(62))
+                + tag(0x0C, dim_bytes(25)) + tag(0x01, u16(34))
+                + tag(0x0E, dim_bytes(1000)) + tag(0x0F, dim_bytes(2000))
+                + u16(1) + u16(1) + u16(2) + pstring("A1")
+                + pstring("E"))
+        s = pcb9.Stream(data, pcb9.V260)
+        pad = pcb9.parse_pad(s)
+        assert (pad.x, pad.y, pad.name) == (1000.0, 2000.0, "A1")
+        assert pad.top == (50.0, 60.0, 1)
+        assert pad.bot == (52.0, 62.0, 2)
+        assert pad.rotation == 0.0 and pad.raw_tail == ()
+        assert s.peek_marker() == b"E"        # the cursor stopped in the right place
+
+    def test_version_200_has_one_pad_size_for_every_layer(self):
+        data = (tag(0x09, dim_bytes(50)) + tag(0x0A, dim_bytes(60))
+                + tag(0x0C, dim_bytes(25)) + tag(0x01, u16(34))
+                + tag(0x0E, dim_bytes(1000)) + tag(0x0F, dim_bytes(2000))
+                + u16(3) + pstring("7") + pstring("E"))
+        s = pcb9.Stream(data, pcb9.V200)
+        pad = pcb9.parse_pad(s)
+        assert pad.top == pad.mid == pad.bot == (50.0, 60.0, 3)
+        assert s.peek_marker() == b"E"
+
+    def test_a_track_before_270_carries_one_trailing_u16(self):
+        data = (tag(0x03, dim_bytes(8)) + tag(0x01, u16(1))
+                + dim_bytes(100) + dim_bytes(300) + dim_bytes(200) + u16(0)
+                + pstring("tv"))
+        s = pcb9.Stream(data, pcb9.V260)
+        track = pcb9.parse_track(s, "h")
+        assert (track.x1, track.x2, track.y1) == (100.0, 300.0, 200.0)
+        assert track.width == 8.0 and track.tail == (0,)
+        assert s.peek_marker() == b"tv"
+
+    def test_a_via_before_270_carries_one_trailing_u16(self):
+        data = (tag(0x05, dim_bytes(50)) + tag(0x06, dim_bytes(28))
+                + dim_bytes(1899) + dim_bytes(1859) + u16(1) + pstring("P"))
+        s = pcb9.Stream(data, pcb9.V260)
+        via = pcb9.parse_via(s)
+        assert (via.x, via.y, via.diameter, via.hole) == (1899.0, 1859.0, 50.0, 28.0)
+        assert via.raw_tail == (1,)
+        assert s.peek_marker() == b"P"
+
+    def test_a_net_tail_is_four_u16_in_260_and_none_in_200(self):
+        body = (pstring("N") + pstring("IORQ") + dim_bytes(0) + dim_bytes(0)
+                + u16(2) + u16(2)
+                + pstring("(") + u16(1) + u16(4) + pstring(")")
+                + pstring("{") + u16(1) + u16(2) + u16(3) + u16(4) + pstring("}"))
+        s = pcb9.Stream(body + u16(2) + u16(1) + u16(0) + u16(34) + pstring("N"),
+                        pcb9.V260)
+        net = pcb9.parse_net(s, 0)
+        assert net.name == "IORQ" and net.members == [(1, 4)]
+        assert net.tail == (2, 1, 0, 34)
+        assert s.peek_marker() == b"N"
+
+        s = pcb9.Stream(body + pstring("N"), pcb9.V200)
+        assert pcb9.parse_net(s, 0).tail == ()
+        assert s.peek_marker() == b"N"
+
+
+def empty_board(version: str) -> bytes:
+    """A board with a header and every section present and empty."""
+    head = pstring(version) + u16(0) + struct.pack("<9I", *([0] * 9)) + u16(0)
+    sections = b"".join(pstring(m) for m in
+                        ("G", "X", "TH", "TV", "T+", "T-", "TN", "F", "A", "V", "P", "D"))
+    return head + sections
+
+
+class TestVintageSelection:
+    def test_each_known_vintage_picks_its_own_layout(self, tmp_path):
+        for version, layout in (("PCB FILE 9 VERSION 2.70", pcb9.V270),
+                                ("PCB FILE 9 VERSION 2.60", pcb9.V260),
+                                ("PCB FILE 9 VERSION 2.00", pcb9.V200)):
+            path = tmp_path / f"{layout.version}.PCB"
+            path.write_bytes(empty_board(version))
+            board = pcb9.parse(path, strict=True)
+            assert board.version == version
+            assert board.errors == []
+
+    def test_a_vintage_nobody_has_decoded_is_refused_by_name(self, tmp_path):
+        path = tmp_path / "later.PCB"
+        path.write_bytes(empty_board("PCB FILE 9 VERSION 3.50"))
+        with pytest.raises(pcb9.ParseError) as e:
+            pcb9.parse(path)
+        assert "3.50" in str(e.value) and "2.70" in str(e.value)
 
 
 # Reference boards are not shipped: they belong to the archive this parser was
