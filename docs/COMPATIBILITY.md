@@ -332,6 +332,30 @@ Schematics are out of scope for this package, which converts boards.
 
 ---
 
+## `PROTEL PCBLIB` footprint libraries
+
+**Status: not read.** A `.LIB` beside a Protel project holds footprints, and
+none of the readers here needs one: `PCB FILE 4`, `PCB FILE 6`, `PCB FILE 9`
+and PCB ASCII all store a component's pad geometry in the board file. A library
+matters only if you want the footprints on their own.
+
+An earlier reader for `PROTEL PCBLIB 20` and `22` exists in this repository's
+history, at tag `v0.1.0`. It was removed rather than carried forward because it
+is wrong in a way that is quiet: measured against the four libraries shipped in
+the Protel for Windows 2.8 installer, it reads **no pads at all** from the two
+`PCBLIB 22` files, and from the `PCBLIB 20` files it reads one pad too many per
+footprint - `DIP14` comes back with 15 pads and `DIP40` with 41. A footprint
+library that is silently off by one is worse than none.
+
+Re-checking it is a few lines:
+
+```python
+from protel99_parser.pcblib_parser import parse_pcblib      # at tag v0.1.0
+print(len(parse_pcblib("PFWDEMO.LIB")["DIP14"].pads))       # prints 15, should be 14
+```
+
+---
+
 ## Formats recognised but not decoded
 
 These are identified by header, named in error messages, and skipped by batch

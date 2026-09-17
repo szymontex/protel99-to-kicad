@@ -1,28 +1,21 @@
-"""protel99-to-kicad: Parse Protel 99 SE binary PCB files."""
+"""Convert legacy Protel board files to KiCad.
 
-from protel99_parser.parser import (
-    Protel99Parser,
-    PCBData,
-    Component,
-    Track,
-    Via,
-    main,
-)
+One entry point, `protel-to-kicad`, and one model. `formats` identifies a file
+from its header and hands it to the reader that decodes it; every reader
+returns the same `Board`, so the KiCad writer never asks which generation of
+Protel wrote the file it is given.
 
-from protel99_parser.pcblib_parser import (
-    parse_pcblib,
-    FootprintData,
-    PadInfo,
-    LineInfo,
-)
+    from pathlib import Path
+    from protel99_parser import formats, pcb9_kicad
 
-from protel99_parser.footprint_generator import (
-    generate_kicad_mod,
-    resolve_footprint,
-)
+    board, fmt = formats.parse(Path("board.PCB"))
+    text, stats = pcb9_kicad.generate(board, board.outline_layer or fmt.outline_layer)
 
-__all__ = [
-    'Protel99Parser', 'PCBData', 'Component', 'Track', 'Via', 'main',
-    'parse_pcblib', 'FootprintData', 'PadInfo', 'LineInfo',
-    'generate_kicad_mod', 'resolve_footprint',
-]
+Readers: `pcb9` (binary, versions 2.00 / 2.60 / 2.70), `pcb4` (Autotrax and
+Easytrax text), `pcb6` (Protel PCB ASCII), `pcbascii` (the later `|RECORD=|`
+PCB ASCII), `ddb` (Protel design databases, which hold a whole project).
+"""
+
+from protel99_parser.pcb9 import Board
+
+__all__ = ["Board"]
