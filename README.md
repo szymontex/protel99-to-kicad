@@ -129,6 +129,13 @@ of any kind: 1170 parse clean with zero count mismatches and zero unknown tags;
 8 are damaged at byte level and are read in salvage mode, which reports every
 resynchronisation with its offset.
 
+**The gerbers Autotrax itself plotted**, for two boards published with their
+gerber sets: the pad and via breakdown predicts 49 and 138 flashes per copper
+layer, the gerbers hold 49 and 138, and every flash lands within 0.000 mil of a
+pad or via once the plot's own origin and mirror are taken out. On the board
+whose gerber is RS-274X the declared aperture diameters are the pad sizes in the
+board file to the digit.
+
 **Boards published by other people.** 140 boards collected from vendor
 installers on archive.org and from 35 unrelated GitHub repositories, none of
 them written by anyone involved here, were converted and then drawn by

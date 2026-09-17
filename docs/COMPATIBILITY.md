@@ -86,6 +86,28 @@ salvaged records**, 4366 components, 101142 tracks, 31056 pads, 3930 vias.
 Track and component totals were checked against an independent count of the
 record tags in the raw files and matched exactly.
 
+**Verified against gerbers the original program plotted.** Two of those boards
+are published with the gerber set Traxplot wrote from them, which is a witness
+this package cannot influence. For each, the pad and via breakdown was used to
+predict how many flashes every copper layer should carry, then the flashes were
+read out of the gerber and matched back to the board:
+
+| Board | Predicted flashes per copper layer | Measured | Flashes further than 1 mil from a pad |
+|---|---|---|---|
+| `PCB_1` | 48 pads + 1 via = **49** | 49 top, 49 bottom | **0 of 49**, worst 0.000 mil |
+| `Vac1b` | 103 pads + 35 vias = **138** | 138 top, 138 bottom | **0 of 138**, worst 0.000 mil |
+
+Where the board is drawn is a property of the board; where the plot puts it is
+a property of the plot, so the comparison allows one rigid transform and reports
+which one fitted. `PCB_1` needed none. `Vac1b` needed a mirror in X - its plot
+was made for film - and after it every one of the 138 flashes landed exactly on
+a pad or a via.
+
+`PCB_1`'s gerber is RS-274X, so it also names its apertures. The diameters it
+declares are the pad sizes in the board file, to the digit: 52, 60, 62, 70 and
+240 mil on both sides. `Vac1b`'s is RS-274D, which keeps its aperture table in
+a separate wheel file, so sizes could not be compared there.
+
 Two deviations from the published specification occur in real files and both
 are read: tracks without their trailing `user-routed` flag (13406 of 101142)
 and vias carrying one field more than the four documented.
@@ -376,7 +398,10 @@ What helps, in order:
 1. **A board plus the gerbers the original program plotted from it.** This is
    worth more than anything else: it is a witness written by the vendor's own
    software, so it can prove a decode right rather than merely self-consistent.
-   `PCB FILE 6` needs this most - it has no independent witness at all.
+   It is what put a real accuracy figure on `PCB FILE 4` above.
+   **`PCB FILE 6` needs this most** - it is the one format here with no
+   independent witness at all, and no sample of it has yet turned up with its
+   gerbers beside it.
 2. **A board plus an ASCII export** of the same board from the original tool.
 3. **A board alone.** Still useful - the object counters in the header make a
    real check - but it cannot establish accuracy.
