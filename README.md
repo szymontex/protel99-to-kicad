@@ -32,8 +32,8 @@ Full detail, accuracy figures and caveats: **[docs/COMPATIBILITY.md](docs/COMPAT
 pip install -e .
 ```
 
-Python 3.10 or newer. Standard library only - `matplotlib` is pulled in solely
-by the optional `[plot]` extra.
+Python 3.10 or newer, and nothing else. No compiled extensions, no
+dependencies, no KiCad installation needed to run the converter.
 
 ## Use
 
@@ -88,7 +88,7 @@ to do about it. Detail: [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md#ddb-design
 |------|-------------|
 | `-o`, `--output PATH` | Output `.kicad_pcb` path |
 | `--batch IN_DIR OUT_DIR` | Convert every readable board under `IN_DIR`, mirroring the tree |
-| `--outline-layer N` | Protel layer holding the board outline. Default follows the format: 29 (Mechanical 1) for `PCB FILE 9` and PCB ASCII, 28 (Keep Out) for `PCB FILE 6` and Autotrax |
+| `--outline-layer N` | Protel layer holding the board outline. Default follows the file: 29 (Mechanical 1) for `PCB FILE 9` from 2.70 and for PCB ASCII, 28 (Keep Out) for `PCB FILE 9` before 2.70, `PCB FILE 6` and Autotrax |
 | `--list` | List the documents inside a `.ddb` design database and stop |
 | `--document N` | Which board to take out of a `.ddb`, by index from `--list` or by format name. Default is the largest board in it |
 | `--hide-designators` | Write designators as hidden fields, as Protel's silkscreen plots show them |
@@ -187,6 +187,15 @@ independent witness - are in [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md).
   of its entries and looks like stale bookkeeping.
 - **The designator-visibility flag** is not identified in the binary, which is
   why `--hide-designators` is a switch rather than a decode.
+- **`PROTEL PCBLIB` footprint libraries** are not read. Boards do not need them
+  - every reader here takes pad geometry from the board itself - so a library
+  is only interesting if you want the footprints on their own. An earlier
+  attempt at one is in the repository at tag `v0.1.0`; it is not reliable, and
+  the measurement that shows it is in
+  [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md#protel-pcblib-footprint-libraries).
+- **Fills, free texts and polygons in `PCB FILE 9` 2.60 and 2.00** are read
+  with the 2.70 layout because no sample of those vintages contains one. Every
+  record a sample does exercise is measured.
 
 ## Format internals
 
@@ -222,38 +231,6 @@ If you have boards in an undecoded format - especially **with the gerbers the
 original program plotted from them**, which is a witness the decoder cannot
 fake - see [Contributing a sample](docs/COMPATIBILITY.md#contributing-a-sample).
 
-## Legacy pipeline (`protel99-parse`)
-
-**Superseded. Use `protel-to-kicad`.** This entry point predates the decoded
-format and is kept only so existing scripts keep running.
-
-It cannot place anything from the binary alone: it needs footprint libraries
-for geometry and an ASCII v2.70 export for positions and copper. Without a
-rosetta export it resolves about 70 % of positions through a pad-centroid
-fallback with a mean error around 126 mil, and emits **zero copper tracks**.
-Those limits are properties of this pipeline, not of the format.
-
-```bash
-protel99-parse board.PCB --ascii-rosetta board.ascii.PCB -o board.kicad_pcb
-```
-
-| Flag | Description |
-|------|-------------|
-| `-o`, `--output PATH` | Output `.kicad_pcb` file path |
-| `--ascii-rosetta PATH` | ASCII v2.70 export used for component positions and copper |
-| `--ground-truth PATH` | KiCad reference board used for positions when no rosetta export is available |
-| `--pcblib PATH` | Footprint library to load. Repeatable |
-| `--position-stats` | Print position-source breakdown and copper track counts |
-| `--stats` | Print file-structure statistics |
-| `--components` | Print the component list |
-| `--json` | Emit component data as JSON |
-| `--raw` | Dump raw record data |
-| `--plot` | Plot the board layout |
-| `--plot-copper` | Plot the copper layers |
-| `--save-plot PATH` | Save the plot to a file instead of displaying it |
-
-Optional plotting support: `pip install -e .[plot]`.
-
 ## Testing
 
 ```bash
@@ -261,11 +238,13 @@ pip install -e .
 pytest
 ```
 
-The suite covers the stream primitives, format detection and every ASCII
-reader against synthetic data - the Autotrax and PCB ASCII fixtures are the
-record examples printed in the vendors' own specifications. Reference-board tests read their directory from
-`PCB9_REFERENCE_DIR` and skip cleanly when the boards are not present; real
-boards are intentionally not bundled.
+The suite covers the stream primitives, every record layout of every
+`PCB FILE 9` vintage, format detection and every ASCII reader, all against
+synthetic data - the Autotrax and PCB ASCII fixtures are the record examples
+printed in the vendors' own specifications. Reference-board tests read their
+directory from `PCB9_REFERENCE_DIR` and skip cleanly when the boards are not
+present; real boards are intentionally not bundled, so the suite runs anywhere
+in well under a second.
 
 ## License
 
@@ -274,8 +253,10 @@ MIT. See [`LICENSE`](LICENSE).
 ---
 
 <sub>Keywords: Protel to KiCad converter, Protel 99 SE to KiCad, Autotrax to
-KiCad, Easytrax to KiCad, open Protel PCB file, convert `.ddb` to KiCad,
-Protel PCB ASCII, `PCB FILE 4`, `PCB FILE 5`, `PCB FILE 6 VERSION 2.80`,
-`PCB FILE 9 VERSION 2.70`, `PCB 4.0 Binary File`, Protel Advanced PCB, Protel
-for Windows, legacy PCB file conversion, EDA file format reverse engineering,
-Altium PcbDoc to KiCad, convert old PCB files, `.PCB` file format.</sub>
+KiCad, Easytrax to KiCad, Advanced PCB to KiCad, open Protel PCB file, convert
+`.ddb` to KiCad, Protel PCB ASCII, `PCB FILE 4`, `PCB FILE 5`,
+`PCB FILE 6 VERSION 2.80`, `PCB FILE 9 VERSION 2.70`,
+`PCB FILE 9 VERSION 2.60`, `PCB FILE 9 VERSION 2.00`, `PCB 4.0 Binary File`,
+Protel Advanced PCB, Protel for Windows, legacy PCB file conversion, EDA file
+format reverse engineering, Altium PcbDoc to KiCad, convert old PCB files,
+`.PCB` file format.</sub>
