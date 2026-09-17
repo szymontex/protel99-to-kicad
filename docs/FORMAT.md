@@ -391,9 +391,17 @@ None of these affect geometry, layers or connectivity.
 
 ## 9. Verification
 
-The format was not taken on trust. Four witnesses, none of which owes anything
-to this parser, were used; the tooling that drives them is kept outside this
-repository because it carries the boards it was run against.
+The format was not taken on trust. Several witnesses were used, none of which
+owes anything to this parser. The gerber comparison is in
+[`tools/gerber_compare.py`](../tools/gerber_compare.py) and runs on any two
+RS-274X files:
+
+```bash
+python3 tools/gerber_compare.py original.GTL converted.GTL
+```
+
+The rest of the tooling is kept outside this repository because it carries the
+boards it was run against.
 
 **Protel's own ASCII v2.70 export.** Two boards in the source archive have one.
 Every object class was matched one to one - components, texts, pads, tracks,
