@@ -203,21 +203,57 @@ takes the Protel number.
 
 A `.ddb` is the container almost every Protel 99 and 99 SE project is delivered
 in. It is a Microsoft Jet (Access) database holding the whole design: boards,
-schematics, libraries and netlists as stored documents.
+schematics, libraries and netlists as stored documents. Jet is not decoded
+here and does not need to be - every Protel document announces itself with a
+header string, so documents are found where they lie and cut out.
 
-What this package can get out of one:
+A project is not a board, so start by looking inside it:
 
-- a board saved as **PCB ASCII**, read from the `|RECORD=|` text;
-- a board stored as **`PCB FILE 4`, `5` or `6`**, cut out between its header
-  and its `ENDPCB` terminator.
-
-What it cannot get out of one: a board stored as **`PCB 4.0 Binary File`**,
-which is most of them. When there is nothing readable inside, the error says
-what the database does contain rather than that the file is unrecognised:
+```bash
+protel-to-kicad project.ddb --list
+```
 
 ```
-tag104.ddb: no PCB ASCII document inside. Contents: 53 x PCB 4.0 binary board,
-15 x schematic. Open the project in Protel and save the board as PCB ASCII
+project.ddb: 2 documents
+  [ 0] PCB ASCII board                       198638 bytes  reads
+  [ 1] PCB 4.0 binary board                  460783 bytes  -
+  [ *] Protel PCB ASCII text                        reads
+  document names in the database, order not matched to the list above:
+    xd.pcb, Backup of xd.pcb, 3D xd.pcb, xd.DRC
+```
+
+Then take one:
+
+```bash
+protel-to-kicad project.ddb --document 0 -o board.kicad_pcb
+protel-to-kicad project.ddb -o board.kicad_pcb     # the largest board in it
+protel-to-kicad --batch projects/ out/             # every board in every .ddb
+```
+
+`--document` takes an index from `--list` or a piece of a format name
+(`--document autotrax`). A batch run writes every readable board in a database,
+suffixed `-0`, `-1` and so on when there is more than one, because converting
+only the first would silently drop the rest.
+
+**Document names are listed but not paired with the documents.** Protel keeps
+its document table in plain text, so the names are readable; matching a name to
+a stored blob needs the Jet table structure, which is not decoded. Guessing the
+pairing would put a confident wrong name on a converted board.
+
+What comes out: boards stored as **PCB ASCII**, or as **`PCB FILE 4`, `5`, `6`
+or `PCB FILE 9`**. What does not: a board stored as **`PCB 4.0 Binary File`**,
+which is most of them.
+
+When nothing comes out, the message says which of two different things
+happened, because they call for different next steps:
+
+```
+project.ddb: the board documents inside are in a format that is not decoded
+yet. Contents: 53 x PCB 4.0 binary board, 15 x schematic. Open the project in
+Protel and save the board as PCB ASCII
+
+drawings.ddb: no board document inside - this database holds 8 x schematic.
+This package converts boards; schematics and libraries are out of scope
 ```
 
 Measured on 147 public `.ddb` files (2026-09-17): 16 yielded a board. The

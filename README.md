@@ -18,7 +18,7 @@ comes out; the writer is never told which one it was handed.
 | `PCB FILE 9 VERSION 2.70` | Protel for Windows / Advanced PCB | **converts** |
 | `PCB FILE 6 VERSION 1.10` / `2.70` / `2.80` | Protel PCB ASCII export | **converts** |
 | `\|RECORD=Board\|...` | Protel 98 / 99 / 99 SE, saved as PCB ASCII | **converts** |
-| `.ddb` design database | Protel 99 / 99 SE | **converts** the boards inside it that are text |
+| `.ddb` design database | Protel 99 / 99 SE | **converts** the boards inside it this package can read |
 | `PCB FILE 9 VERSION 2.00` / `2.60` | Protel for Windows 2.x | recognised, not decoded |
 | `PCB 4.0 Binary File` | Protel 98 / 99 / 99 SE | recognised, not decoded - [save it as PCB ASCII](docs/COMPATIBILITY.md#protel-pcb-ascii---the-way-out-of-the-binary) |
 | `PCB 3.0 Binary File`, `DOS 3 PCB` | Protel Advanced PCB 3, Protel for DOS | recognised, not decoded |
@@ -62,6 +62,20 @@ batch: 18 converted, 0 failed
 head -c 40 board.PCB | strings | head -1
 ```
 
+### A whole project in a `.ddb`
+
+A design database holds the project, not a board, so look inside it first:
+
+```bash
+protel-to-kicad project.ddb --list                     # what is in there
+protel-to-kicad project.ddb --document 0 -o out.kicad_pcb
+protel-to-kicad project.ddb -o out.kicad_pcb           # the largest board in it
+```
+
+Most Protel 99 SE projects store their boards as `PCB 4.0 Binary File`, which
+is not decoded. When that is what is inside, the message says so and says what
+to do about it. Detail: [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md#ddb-design-databases---partial).
+
 ### Flags
 
 | Flag | Description |
@@ -69,6 +83,8 @@ head -c 40 board.PCB | strings | head -1
 | `-o`, `--output PATH` | Output `.kicad_pcb` path |
 | `--batch IN_DIR OUT_DIR` | Convert every readable board under `IN_DIR`, mirroring the tree |
 | `--outline-layer N` | Protel layer holding the board outline. Default follows the format: 29 (Mechanical 1) for `PCB FILE 9` and PCB ASCII, 28 (Keep Out) for `PCB FILE 6` and Autotrax |
+| `--list` | List the documents inside a `.ddb` design database and stop |
+| `--document N` | Which board to take out of a `.ddb`, by index from `--list` or by format name. Default is the largest board in it |
 | `--hide-designators` | Write designators as hidden fields, as Protel's silkscreen plots show them |
 | `--quiet` | Suppress the per-board summary |
 

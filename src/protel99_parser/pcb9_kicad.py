@@ -33,7 +33,7 @@ import sys
 import uuid
 from pathlib import Path
 
-from protel99_parser import formats, pcb9
+from protel99_parser import ddb, formats, pcb9
 
 MIL_TO_MM = 0.0254
 KICAD_VERSION = 20241229
@@ -610,14 +610,23 @@ HEADER9 = b"PCB FILE 9 VERSION 2.70"
 
 
 def convert(binary: Path, output: Path, outline_layer: int | None = None,
-            quiet: bool = True) -> dict:
+            quiet: bool = True, document: str | None = None) -> dict:
     """Convert one board in any supported Protel format.
 
     `outline_layer` defaults to whatever the detected format uses, because the
     generations disagree: 29 in `PCB FILE 9`, 28 in `PCB FILE 6`. Passing a
     number overrides that for boards that break the habit.
+
+    `document` picks one board out of a `.ddb`, which holds a whole project
+    rather than a single layout. Without it the largest board in the database
+    is taken - in a project with one layout and a pile of libraries, that is
+    the layout.
     """
-    b, fmt = formats.parse(binary)
+    if document is not None:
+        b = ddb.parse(binary, document)
+        fmt = formats.identify(binary)
+    else:
+        b, fmt = formats.parse(binary)
     text, stats = generate(b, fmt.outline_layer if outline_layer is None
                            else outline_layer)
     stats["format"] = fmt.label
@@ -652,6 +661,33 @@ def batch(in_dir: Path, out_dir: Path, outline_layer: int | None = None) -> int:
             label = f"{fmt.label} not decoded yet"
             undecoded[label] = undecoded.get(label, 0) + 1
             continue
+        if fmt.key == "ddb":
+            # A design database is a project, not a board. Converting only the
+            # first one found would silently drop the rest.
+            found = ddb.boards(p)
+            if not found:
+                try:
+                    ddb.parse(p)
+                except ddb.ParseError as e:
+                    undecoded[str(e)] = undecoded.get(str(e), 0) + 1
+                continue
+            for n, b in enumerate(found):
+                suffix = "" if len(found) == 1 else f"-{n}"
+                target = (out_dir / p.relative_to(in_dir)
+                          .with_suffix("")).with_name(
+                              p.stem + suffix + ".kicad_pcb")
+                text, stats = generate(b, fmt.outline_layer if outline_layer is None
+                                       else outline_layer)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(text, encoding="utf-8")
+                done += 1
+                flag = (f"  SALVAGED ({stats['parse_errors']} errors)"
+                        if stats["parse_errors"] else "")
+                print(f"ok    {target.name}  [ddb]  components {stats['components']}"
+                      f" segments {stats['segments']} vias {stats['vias']}"
+                      f" nets {stats['nets']}{flag}")
+            continue
+
         target = out_dir / p.relative_to(in_dir).with_suffix(".kicad_pcb")
         try:
             stats = convert(p, target, outline_layer)
@@ -689,19 +725,33 @@ def main() -> int:
     ap.add_argument("--outline-layer", type=int, default=None,
                     help="Protel layer holding the board outline "
                          "(default: per format, 29 for PCB FILE 9, 28 for PCB FILE 6)")
+    ap.add_argument("--list", action="store_true",
+                    help="list the documents inside a .ddb design database and stop")
+    ap.add_argument("--document", metavar="INDEX_OR_FORMAT", default=None,
+                    help="which board to take out of a .ddb (see --list); "
+                         "default is the largest one in it")
     ap.add_argument("--quiet", action="store_true")
     ap.add_argument("--hide-designators", action="store_true",
                     help="write component designators as hidden fields, as Protel's silkscreen plots in this archive show them")
     a = ap.parse_args()
     global HIDE_DESIGNATORS
     HIDE_DESIGNATORS = a.hide_designators
+    if a.list:
+        if a.binary is None:
+            ap.error("--list needs a file")
+        try:
+            print(ddb.listing(a.binary))
+        except ddb.ParseError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 2
+        return 0
     if a.batch:
         return batch(a.batch[0], a.batch[1], a.outline_layer)
     if a.binary is None or a.output is None:
         ap.error("need BOARD.PCB -o OUT.kicad_pcb, or --batch IN_DIR OUT_DIR")
     try:
-        convert(a.binary, a.output, a.outline_layer, a.quiet)
-    except formats.UnsupportedFormat as e:
+        convert(a.binary, a.output, a.outline_layer, a.quiet, a.document)
+    except (formats.UnsupportedFormat, ddb.ParseError) as e:
         # A file this package cannot read is an ordinary outcome, not a crash.
         # A traceback here buries the one line that says which format it is.
         print(f"error: {e}", file=sys.stderr)
