@@ -381,6 +381,41 @@ no Autotrax backend - so it is not a route available today.
 
 ---
 
+## `.pcb` files that are not Protel at all
+
+`.pcb` is not a Protel extension - it is at least five vendors' extension, and
+a board downloaded from a chip maker's evaluation page is more often PADS than
+Protel. So a file this package cannot read is named rather than dismissed:
+
+```
+DC960a.pcb: this is a PADS (binary) file, not a Protel board - KiCad 9 has no
+PADS importer; the development branch does
+```
+
+| First bytes | Written by | What to do |
+|---|---|---|
+| `00 FF xx 20` | PADS, binary | KiCad 9 has no PADS importer; `master` does |
+| `!PADS-POWERPCB` | PADS, ASCII | as above |
+| `ACCEL_ASCII` | P-CAD / ACCEL | KiCad reads it: File > Import > Non-KiCad Board File |
+| `# release: pcb` | gEDA PCB | KiCad reads it |
+| `ha:pcb-rnd-board` | pcb-rnd | export gEDA PCB from pcb-rnd, KiCad reads that |
+| `CIRCAD` | CIRCAD | no importer known; its gerbers are readable |
+| `D0 CF 11 E0` | OLE compound document | Altium `.PcbDoc` or OrCAD `.dsn`; KiCad reads Altium |
+| `(kicad_pcb` | KiCad | already a KiCad board |
+
+**How often does this matter?** 40 Analog Devices and Linear Technology
+evaluation-board design packages were sampled and every board file inside them
+classified by its first bytes (measured 2026-09-17): **37 PADS boards, 36 OrCAD
+`.dsn` schematics, and no Protel file of any generation**. The DC960A package,
+which prompted the check, holds `DC960a.pcb` - a PADS binary - and `DC960a.dsn`,
+an OrCAD schematic.
+
+The lesson for anyone looking for Protel boards: chip makers' evaluation pages
+are not where they are. The Protel material found for this package came from
+vendor installers of the 1990s and from engineers' own project repositories.
+
+---
+
 ## Schematics
 
 Out of scope for this package, which converts boards. For the record, the

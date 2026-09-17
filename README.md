@@ -62,6 +62,12 @@ batch: 18 converted, 0 failed
 head -c 40 board.PCB | strings | head -1
 ```
 
+`.pcb` belongs to at least five tools, so a file that is not Protel is named
+rather than dismissed - PADS, P-CAD, gEDA, CIRCAD, OrCAD and Altium are
+recognised on sight, with a line about what reads each. Sampled across 40
+Analog Devices evaluation-board packages: 37 PADS boards, 36 OrCAD schematics,
+no Protel. Chip makers' evaluation pages are not where Protel boards are.
+
 ### A whole project in a `.ddb`
 
 A design database holds the project, not a board, so look inside it first:
