@@ -126,7 +126,9 @@ coordinate within 0.0009 mil.
 
 **The gerbers Protel itself plotted** for those boards, layer by layer: pads
 and vias within 1 mil, copper 100 %, every drill hole matched with the tool
-diameter Protel wrote.
+diameter Protel wrote. The comparison is
+[`tools/gerber_compare.py`](tools/gerber_compare.py), and it works on any two
+RS-274X files - point it at your own board and its plot.
 
 **KiCad's own `pcbnew` loader**, reading the result back: pad, footprint-anchor
 and via positions within 0.0003 mil of the binary.
