@@ -212,6 +212,118 @@ def test_database_holding_only_binary_says_what_is_in_it(tmp_path):
         ddb.parse(p)
     msg = str(e.value)
     assert "PCB 4.0 binary board" in msg and "schematic" in msg
+    assert "save the board as PCB ASCII" in msg
+
+
+def test_database_with_no_board_at_all_does_not_tell_you_to_save_the_board(tmp_path):
+    """A project of schematics has no board to re-save, so saying so is wrong.
+
+    The advice that fits a database full of undecoded boards is nonsense in a
+    database that holds none, and a user following it looks for a board that
+    was never there.
+    """
+    p = tmp_path / "p.ddb"
+    p.write_bytes(JET + b"Protel for Windows - Schematic Capture" * 8)
+    with pytest.raises(ddb.ParseError) as e:
+        ddb.parse(p)
+    msg = str(e.value)
+    assert "no board document inside" in msg
+    assert "8 x schematic" in msg
+    assert "PCB ASCII" not in msg
+
+
+# --------------------------------------------------------------------------
+# picking one document out of a project
+# --------------------------------------------------------------------------
+
+def two_document_database() -> bytes:
+    small = b"PCB FILE 4\r\nFT\r\n0 0 10 10 12 1 1\r\nENDPCB\r\n"
+    big = ("PCB FILE 6 VERSION 2.80\r\n0 0 0 0 0 0 0 0 0 0\r\n"
+           + "FT\r\n0 0 100000 200000 300000 400000 10000 1 0 0 0\r\n 0 0 1 0 0\r\n" * 20
+           + "ENDPCB\r\n").encode()
+    return JET + b"pad" * 50 + small + b"pad" * 50 + big + b"trailing"
+
+
+def test_documents_are_listed_with_sizes_and_whether_they_can_be_read(tmp_path):
+    p = tmp_path / "p.ddb"
+    p.write_bytes(two_document_database() + b"\x13PCB 4.0 Binary File")
+    docs = ddb.documents(p.read_bytes())
+    assert [d.label for d in docs] == ["Autotrax board", "PCB ASCII board",
+                                       "PCB 4.0 binary board"]
+    assert [d.readable for d in docs] == [True, True, False]
+    assert all(d.size > 0 for d in docs)
+
+
+def test_a_document_stops_at_its_own_terminator(tmp_path):
+    """Two boards stored back to back must not be read as one.
+
+    Without the `ENDPCB` bound the first document would swallow the second and
+    the reader would report a board that does not exist.
+    """
+    p = tmp_path / "p.ddb"
+    p.write_bytes(two_document_database())
+    data = p.read_bytes()
+    first = ddb.documents(data)[0]
+    assert data[first.start:first.end].endswith(b"ENDPCB")
+    assert b"PCB FILE 6" not in data[first.start:first.end]
+
+
+def test_the_largest_board_is_taken_by_default(tmp_path):
+    """A project holds one layout and a pile of small documents."""
+    p = tmp_path / "p.ddb"
+    p.write_bytes(two_document_database())
+    assert "PCB FILE 6" in ddb.parse(p).version
+
+
+@pytest.mark.parametrize("which,expected", [(0, "PCB FILE 4"), (1, "PCB FILE 6"),
+                                            ("autotrax", "PCB FILE 4"),
+                                            ("ascii", "PCB FILE 6")])
+def test_a_document_can_be_picked_by_index_or_by_format(tmp_path, which, expected):
+    p = tmp_path / "p.ddb"
+    p.write_bytes(two_document_database())
+    assert expected in ddb.parse(p, which).version
+
+
+def test_picking_something_that_is_not_there_says_so(tmp_path):
+    p = tmp_path / "p.ddb"
+    p.write_bytes(two_document_database())
+    with pytest.raises(ddb.ParseError):
+        ddb.parse(p, 9)
+    with pytest.raises(ddb.ParseError):
+        ddb.parse(p, "eagle")
+
+
+def test_every_readable_board_comes_out_not_just_the_first(tmp_path):
+    """A batch run over a project must not silently drop its other layouts."""
+    p = tmp_path / "p.ddb"
+    p.write_bytes(two_document_database())
+    found = ddb.boards(p)
+    assert len(found) == 2
+    assert {"PCB FILE 4", "PCB FILE 6 VERSION 2.80"} == {
+        b.version.replace(" in .ddb", "") for b in found}
+
+
+def test_a_pcb_file_9_document_is_found_and_marked_readable(tmp_path):
+    """The binary this package decodes is worth carving out of a database too.
+
+    No public `.ddb` in the sample set contains one, so what is tested here is
+    that the document would be found and handed to the reader rather than the
+    caller being told to go and re-save the board as text.
+    """
+    p = tmp_path / "p.ddb"
+    p.write_bytes(JET + b"\x17\xa1PCB FILE 9 VERSION 2.70" + b"\x00" * 64)
+    docs = ddb.documents(p.read_bytes())
+    assert [d.label for d in docs] == ["PCB FILE 9 binary board"]
+    assert docs[0].readable
+
+
+def test_listing_names_the_documents_the_database_mentions(tmp_path):
+    p = tmp_path / "p.ddb"
+    p.write_bytes(two_document_database() + b"\x00board rev2.pcb\x00notes.txt")
+    text = ddb.listing(p)
+    assert "2 documents" in text
+    assert "board rev2.pcb" in text
+    assert "notes.txt" not in text
 
 
 def test_database_with_options_but_no_objects_is_not_an_empty_board(tmp_path):
