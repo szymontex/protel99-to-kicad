@@ -567,7 +567,14 @@ def parse(path: Path, strict: bool = False) -> Board:
     s = Stream(data)
     version = s.string()
     if not version.startswith("PCB FILE 9 VERSION 2.70"):
-        raise ParseError(f"unsupported header {version!r}")
+        # 2.00 and 2.60 exist and are not this format in the parts that matter.
+        # Their tracks and vias decode with this reader, but the component and
+        # text records carry two fields fewer and no rotation, so everything
+        # after the first component desynchronises. Refusing is the honest
+        # answer until those records are decoded; see docs/COMPATIBILITY.md.
+        raise ParseError(
+            f"unsupported header {version!r} - this reader decodes "
+            f"PCB FILE 9 VERSION 2.70")
     h0 = s.u16()
     raw_counts = [s.u32() for _ in range(9)]
     h_last = s.u16()

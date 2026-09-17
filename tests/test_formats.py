@@ -171,3 +171,89 @@ def test_damaged_record_resyncs_instead_of_derailing(tmp_path):
 def test_rejects_a_foreign_header(tmp_path):
     with pytest.raises(pcb6.ParseError):
         pcb6.parse(write(tmp_path, "b.pcb", b"PCB FILE 9 VERSION 2.70\r\n0 0\r\n"))
+
+
+# --------------------------------------------------------------------------
+# older PCB FILE 6 vintages
+# --------------------------------------------------------------------------
+
+V110 = ("PCB FILE 6 VERSION 1.10\r\n0 0 0 0 0 0 0 0 0 0\r\n"
+        "FT\r\n0 0 1100 950 1050 1000 25 16 1 0 0\r\n"
+        "CP\r\n0 0 2450 150 65 65 1 27 0 34 0 0\r\n119\r\n"
+        "FA\r\n0 0 1500 1800 98 0 360 7 17 0 0\r\n"
+        "ENDPCB\r\n")
+
+
+def test_version_110_counts_whole_mils(tmp_path):
+    """2.70 onwards counts 1/1000 mil. Applying that scale to a 1.10 board
+    shrinks it to a thousandth of its size, which still draws - somewhere."""
+    b = pcb6.parse(write(tmp_path, "b.pcb", V110.encode("latin-1")))
+    t = b.tracks[0]
+    assert (t.x1, t.y1) == (1100.0, 950.0)
+    assert t.width == 25.0
+
+
+def test_version_110_has_no_continuation_lines(tmp_path):
+    """Swallowing one would eat the next record's tag and derail the file.
+
+    Before this was handled, both 1.10 boards in the sample set lost 388
+    records each to resynchronisation.
+    """
+    b = pcb6.parse(write(tmp_path, "b.pcb", V110.encode("latin-1")))
+    assert b.errors == []
+    assert len(b.tracks) == 1 and len(b.arcs) == 1
+    assert len(b.components[0].pads if b.components else b.pads) == 1
+
+
+def test_version_110_pad_has_one_size_for_the_whole_pad(tmp_path):
+    b = pcb6.parse(write(tmp_path, "b.pcb", V110.encode("latin-1")))
+    p = b.pads[0]
+    assert p.name == "119"
+    assert (p.x, p.y) == (2450.0, 150.0)
+    assert p.hole == 27.0
+    assert p.layer == 34
+    assert p.top == p.mid == p.bot == (65.0, 65.0, 1)
+
+
+def test_scale_is_chosen_from_the_version():
+    assert pcb6.scale_for("PCB FILE 6 VERSION 1.10") == 1.0
+    assert pcb6.scale_for("PCB FILE 6 VERSION 2.70") == 1000.0
+    assert pcb6.scale_for("PCB FILE 6 VERSION 2.80") == 1000.0
+
+
+# --------------------------------------------------------------------------
+# a sibling vintage of a format we do read
+# --------------------------------------------------------------------------
+
+def test_unreadable_pcb9_vintage_is_unsupported_not_a_traceback(tmp_path):
+    """`PCB FILE 9 VERSION 2.60` is detected as pcb9 and refused by the reader.
+
+    The caller needs one answer for "recognised, not decoded" whether that
+    verdict came from the format table or from the reader's header check.
+    """
+    p = write(tmp_path, "b.pcb", b"\x17\xa1PCB FILE 9 VERSION 2.60" + b"\x00" * 40)
+    assert formats.identify(p).key == "pcb9"
+    with pytest.raises(formats.UnsupportedFormat) as e:
+        formats.parse(p)
+    assert "2.60" in str(e.value)
+
+
+# --------------------------------------------------------------------------
+# the rest of the family
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize("head,key", [
+    (b"|RECORD=Board|FILENAME=x.PCB|KIND=Protel_Advanced_PCB", "pcbascii"),
+    (b"\x13PCB 3.0 Binary File" + b"\x00" * 40, "advpcb3"),
+    (b"\x1bPCB 3.0 Binary Library File" + b"\x00" * 30, "advpcb3_lib"),
+    (b"DOS 3 PCB\r\n" + b"\x00" * 40, "dos3"),
+    (b"\x00\x01\x00\x00Standard Jet DB\x00" + b"\x00" * 40, "ddb"),
+])
+def test_identifies_the_rest_of_the_family(tmp_path, head, key):
+    assert formats.identify(write(tmp_path, "b.pcb", head)).key == key
+
+
+def test_design_databases_are_walked_by_batch_runs():
+    """A project folder holds `.ddb`, not loose boards. Skipping the extension
+    means reporting nothing about the file the project actually arrived in."""
+    assert ".ddb" in formats.readable_suffixes()
