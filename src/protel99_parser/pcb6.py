@@ -307,38 +307,11 @@ def parse(path: Path) -> Board:
     return board
 
 
-def parsed_counts(b: Board) -> dict:
-    """Count what came out of the stream, in the header's own categories.
-
-    The header states eight totals. Comparing them against what was parsed is
-    the only check available for this format: there is no ASCII export and no
-    gerber set for these boards in any archive seen so far.
-
-    One subtlety decides whether the check is meaningful. The header counts
-    every string in the file, and two strings per component are its designator
-    and comment, which this reader lifts into named fields rather than leaving
-    on the text list. Counting only the list makes every board disagree with
-    its own header.
-    """
-    return {
-        "components": len(b.components),
-        "tracks": len(b.tracks) + sum(len(c.tracks) for c in b.components),
-        "pads": len(b.pads) + sum(len(c.pads) for c in b.components),
-        "texts": (len(b.texts) + sum(len(c.texts) for c in b.components)
-                  + sum(bool(c.designator) + bool(c.comment)
-                        for c in b.components)),
-        "fills": len(b.fills) + sum(len(c.fills) for c in b.components),
-        "arcs": len(b.arcs) + sum(len(c.arcs) for c in b.components),
-        "vias": len(b.vias),
-        "nets": len(b.nets),
-    }
-
-
-def header_disagreements(b: Board) -> dict:
-    """Counters where the header and the stream differ: {key: (header, parsed)}."""
-    got = parsed_counts(b)
-    return {k: (b.counts.get(k), v) for k, v in got.items()
-            if b.counts.get(k) != v}
+# Counting what came out of a stream is the same job for every reader, and the
+# check it feeds - the file's own header against the parse - only means
+# something if both sides are counted the same way. One definition, in pcb9,
+# where the shared Board lives.
+from .pcb9 import header_disagreements, parsed_counts   # noqa: E402,F401
 
 
 if __name__ == "__main__":

@@ -38,8 +38,13 @@ from protel99_parser import ddb, formats, pcb9
 MIL_TO_MM = 0.0254
 KICAD_VERSION = 20241229
 
-# Protel 99 layer numbers -> KiCad layer names.
-LAYERS = {
+# Protel layer numbers -> KiCad layer names. This is the default and is never
+# written to: `generate` derives the map for one board from it and puts the
+# result in `LAYERS_IN_FORCE`, which is what `layer_name` reads. Deriving the
+# next board's map from the previous board's map instead is a bug that hides
+# well - a board whose outline sits on 28 drops 29 from the table, and every
+# `PCB FILE 9` board converted after it in the same run then loses its outline.
+DEFAULT_LAYERS = {
     1: "F.Cu", 16: "B.Cu",
     17: "F.SilkS", 18: "B.SilkS",
     19: "F.Paste", 20: "B.Paste",
@@ -51,6 +56,9 @@ LAYERS = {
     30: "Dwgs.User", 31: "Cmts.User", 32: "Eco1.User",   # mechanical 2-4
     33: "Eco2.User",      # drill drawing
 }
+# The map in force for the board being written. One board at a time per
+# process, which is how the batch runner uses it.
+LAYERS_IN_FORCE = dict(DEFAULT_LAYERS)
 COPPER = {1, 16} | set(range(2, 16))
 MULTILAYER = 34
 
@@ -134,8 +142,8 @@ def board_extent(b: pcb9.Board) -> tuple[float, float, float, float]:
 
 
 def layer_name(layer: int, warn: set) -> str:
-    if layer in LAYERS:
-        return LAYERS[layer]
+    if layer in LAYERS_IN_FORCE:
+        return LAYERS_IN_FORCE[layer]
     if 2 <= layer <= 15:
         return f"In{layer - 1}.Cu"
     warn.add(layer)
@@ -517,11 +525,15 @@ def emit_free_pad(out: list, fr: Frame, p: pcb9.Pad, nets: Nets):
 
 def generate(b: pcb9.Board, outline_layer: int) -> tuple[str, dict]:
     warn: set = set()
-    layers = dict(LAYERS)
+    layers = dict(DEFAULT_LAYERS)
     if outline_layer != 29:
-        layers.pop(29, None)
+        # Layer 29 is Mechanical 1 whether or not this board draws its outline
+        # there, so it keeps a home rather than being dropped: an object on a
+        # layer with no mapping goes to Cmts.User and raises a warning, which
+        # would be five boards told their mechanical drawing is unrecognised.
+        layers[29] = "Dwgs.User"
         layers[outline_layer] = "Edge.Cuts"
-    LAYERS.clear(); LAYERS.update(layers)
+    LAYERS_IN_FORCE.clear(); LAYERS_IN_FORCE.update(layers)
 
     x0, y0, x1, y1 = board_extent(b)
     fr = Frame(math.floor(x0 / 1000.0) * 1000.0 - MARGIN_MIL,
@@ -540,7 +552,8 @@ def generate(b: pcb9.Board, outline_layer: int) -> tuple[str, dict]:
     emit_header(out, copper_layers, nets, paper)
     stats = dict(components=0, segments=0, vias=0, arcs_copper=0, arcs_graphic=0, fills=0,
                  outline=0, texts=0, free_pads=0, gr_lines=0, nets=len(nets.names),
-                 polygons=0, parse_errors=len(b.errors))
+                 polygons=0, parse_errors=len(b.errors),
+                 header_disagreements=pcb9.header_disagreements(b))
 
     # board-level copper from components and free objects
     def via(v):
@@ -646,23 +659,63 @@ def convert(binary: Path, output: Path, outline_layer: int | None = None,
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(text, encoding="utf-8")
     if not quiet:
-        print(f"[protel-to-kicad] {binary.name} ({fmt.label}) -> {output}", file=sys.stderr)
+        print(f"[protel-to-kicad] {binary.name} ({b.version}) -> {output}", file=sys.stderr)
         print(f"[protel-to-kicad] {stats}", file=sys.stderr)
         if b.unknown_tags:
             print(f"[protel-to-kicad] WARNING unknown tags {b.unknown_tags}", file=sys.stderr)
     return stats
 
 
-def batch(in_dir: Path, out_dir: Path, outline_layer: int | None = None) -> int:
+def concerns(stats: dict) -> list[str]:
+    """Everything about this conversion that a caller should be told, in words.
+
+    These are the things that go wrong without raising. A salvaged record
+    announces itself; a board that quietly reproduces two thirds of its own net
+    list does not, and neither does an object whose layer has no KiCad
+    equivalent and is therefore not drawn. Each one below is a number the
+    writer already had and used to keep to itself.
+    """
+    out = []
+    bad = stats.get("header_disagreements")
+    if bad:
+        out.append("disagrees with the object counts in its own header: "
+                   + ", ".join(f"{k} says {h}, read {g}"
+                               for k, (h, g) in sorted(bad.items())))
+    if stats.get("parse_errors"):
+        out.append(f"{stats['parse_errors']} records were unreadable and were "
+                   f"salvaged around")
+    if stats.get("net_index_out_of_range"):
+        out.append(f"{stats['net_index_out_of_range']} objects name a net that "
+                   f"is not in the file's net list; they are written with no net")
+    if stats.get("unmapped_layers"):
+        out.append(f"objects on Protel layers {stats['unmapped_layers']} have no "
+                   f"KiCad equivalent and are not drawn")
+    return out
+
+
+def _mismatch_flag(stats: dict) -> str:
+    """The short form of `concerns`, for one line per board in a batch."""
+    bad = stats.get("header_disagreements")
+    if not bad:
+        return ""
+    return ("  HEADER MISMATCH ("
+            + ", ".join(f"{k} says {h}, read {g}" for k, (h, g) in sorted(bad.items()))
+            + ")")
+
+
+def batch(in_dir: Path, out_dir: Path, outline_layer: int | None = None,
+          strict: bool = False) -> int:
     """Convert every readable Protel board under in_dir, mirroring the tree.
 
-    One line per board. Boards read in salvage mode are flagged; boards in a
-    format that is recognised but not decoded are reported by name rather than
-    silently skipped, so a directory full of them does not look empty.
+    One line per board. Boards read in salvage mode are flagged, and so are
+    boards whose object counts do not match the totals in their own header;
+    boards in a format that is recognised but not decoded are reported by name
+    rather than silently skipped, so a directory full of them does not look
+    empty. `strict` makes either of those a non-zero exit.
     """
     files = sorted(p for p in in_dir.rglob("*")
                    if p.is_file() and p.suffix.lower() in formats.readable_suffixes())
-    done = failed = 0
+    done = failed = disagreed = 0
     undecoded: dict = {}
     unknown = 0
     for p in files:
@@ -695,6 +748,8 @@ def batch(in_dir: Path, out_dir: Path, outline_layer: int | None = None) -> int:
                 done += 1
                 flag = (f"  SALVAGED ({stats['parse_errors']} errors)"
                         if stats["parse_errors"] else "")
+                flag += _mismatch_flag(stats)
+                disagreed += bool(stats.get("header_disagreements"))
                 print(f"ok    {target.name}  [ddb]  components {stats['components']}"
                       f" segments {stats['segments']} vias {stats['vias']}"
                       f" nets {stats['nets']}{flag}")
@@ -719,14 +774,19 @@ def batch(in_dir: Path, out_dir: Path, outline_layer: int | None = None) -> int:
             continue
         done += 1
         flag = f"  SALVAGED ({stats['parse_errors']} errors)" if stats["parse_errors"] else ""
+        flag += _mismatch_flag(stats)
+        disagreed += bool(stats.get("header_disagreements"))
         print(f"ok    {p.relative_to(in_dir)}  [{fmt.key}]  components {stats['components']}"
               f" segments {stats['segments']} vias {stats['vias']} nets {stats['nets']}{flag}")
     print(f"batch: {done} converted, {failed} failed", file=sys.stderr)
+    if disagreed:
+        print(f"       {disagreed} disagree with their own header - "
+              f"run with --strict to fail on that", file=sys.stderr)
     for label, n in sorted(undecoded.items()):
         print(f"       {n} skipped: {label}", file=sys.stderr)
     if unknown:
         print(f"       {unknown} skipped: header not recognised", file=sys.stderr)
-    return 1 if failed else 0
+    return 1 if failed or (strict and disagreed) else 0
 
 
 def main() -> int:
@@ -743,6 +803,9 @@ def main() -> int:
                     help="which board to take out of a .ddb (see --list); "
                          "default is the largest one in it")
     ap.add_argument("--quiet", action="store_true")
+    ap.add_argument("--strict", action="store_true",
+                    help="exit non-zero if a board disagrees with the object "
+                         "counts in its own header, or was read in salvage mode")
     ap.add_argument("--hide-designators", action="store_true",
                     help="write component designators as hidden fields, as Protel's silkscreen plots in this archive show them")
     a = ap.parse_args()
@@ -758,16 +821,24 @@ def main() -> int:
             return 2
         return 0
     if a.batch:
-        return batch(a.batch[0], a.batch[1], a.outline_layer)
+        return batch(a.batch[0], a.batch[1], a.outline_layer, a.strict)
     if a.binary is None or a.output is None:
         ap.error("need BOARD.PCB -o OUT.kicad_pcb, or --batch IN_DIR OUT_DIR")
     try:
-        convert(a.binary, a.output, a.outline_layer, a.quiet, a.document)
+        stats = convert(a.binary, a.output, a.outline_layer, a.quiet, a.document)
     except (formats.UnsupportedFormat, ddb.ParseError) as e:
         # A file this package cannot read is an ordinary outcome, not a crash.
         # A traceback here buries the one line that says which format it is.
         print(f"error: {e}", file=sys.stderr)
         return 2
+    told = concerns(stats)
+    for line in told:
+        print(f"warning: {a.binary.name} {line}", file=sys.stderr)
+    if told:
+        print("warning: the board was written all the same - treat what is "
+              "missing above as missing.", file=sys.stderr)
+    if a.strict and told:
+        return 1
     return 0
 
 

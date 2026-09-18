@@ -215,6 +215,39 @@ def test_database_holding_only_binary_says_what_is_in_it(tmp_path):
     assert "save the board as PCB ASCII" in msg
 
 
+def test_an_undecoded_board_is_named_before_the_ascii_scrap_is_blamed(tmp_path):
+    """A database can hold both, and only one of them is the reason.
+
+    Most Protel 99 SE projects store the layout as `PCB 4.0 Binary File` and
+    leave a fragment of PCB ASCII carrying nothing but the board options.
+    Reporting the fragment first tells the user their export is empty, when the
+    truth is that their boards are sitting right there in a format this package
+    does not decode - and the two call for completely different next steps.
+    """
+    p = tmp_path / "p.ddb"
+    p.write_bytes(JET + b"\x13PCB 4.0 Binary File" + b"\x00" * 120
+                  + b"|RECORD=Board|FILENAME=x.PCB|LAYERSETSNAME=Default|")
+    with pytest.raises(ddb.ParseError) as e:
+        ddb.parse(p)
+    msg = str(e.value)
+    assert msg.index("PCB 4.0 binary board") < msg.index("PCB ASCII text")
+    assert "1 x PCB 4.0 binary board" in msg
+    assert "cannot be read yet" in msg
+
+
+def test_a_container_with_no_protel_document_does_not_invent_one(tmp_path):
+    """Jet databases written by other tools exist, and naming their documents
+    would mean printing filenames this package cannot cleanly separate from the
+    bytes around them."""
+    p = tmp_path / "p.ddb"
+    p.write_bytes(JET + b"\x00" * 400)
+    with pytest.raises(ddb.ParseError) as e:
+        ddb.parse(p)
+    msg = str(e.value)
+    assert "no Protel document inside" in msg
+    assert "--list" in msg
+
+
 def test_database_with_no_board_at_all_does_not_tell_you_to_save_the_board(tmp_path):
     """A project of schematics has no board to re-save, so saying so is wrong.
 

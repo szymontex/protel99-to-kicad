@@ -321,19 +321,7 @@ def _resolve_nets(board: Board) -> None:
                     pad.net = index
 
 
-def parsed_counts(b: Board) -> dict:
-    """What came out of the stream. This format carries no header counts."""
-    return {
-        "components": len(b.components),
-        "tracks": len(b.tracks) + sum(len(c.tracks) for c in b.components),
-        "pads": len(b.pads) + sum(len(c.pads) for c in b.components),
-        "texts": (len(b.texts) + sum(len(c.texts) for c in b.components)
-                  + sum(bool(c.designator) + bool(c.comment) for c in b.components)),
-        "fills": len(b.fills) + sum(len(c.fills) for c in b.components),
-        "arcs": len(b.arcs) + sum(len(c.arcs) for c in b.components),
-        "vias": len(b.vias) + sum(len(c.vias) for c in b.components),
-        "nets": len(b.nets),
-    }
+from .pcb9 import parsed_counts        # noqa: E402,F401
 
 
 if __name__ == "__main__":

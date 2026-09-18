@@ -253,25 +253,55 @@ def _read_ascii(path: Path, data: bytes) -> Board | None:
 
 
 def _why_nothing(data: bytes) -> str:
-    """The reason there is no board, which is not the same reason every time."""
+    """The reason there is no board, which is not the same reason every time.
+
+    The order of these four matters. A database can hold boards in a format
+    that is not decoded **and** a scrap of PCB ASCII text carrying nothing but
+    the board options; blaming the scrap then hides the real answer, which is
+    that the boards are right there and this package cannot read them yet.
+    Undecoded boards are therefore reported first, by name and by count, then
+    boards a reader claimed and could not deliver, then the scrap, then the
+    database that holds no board at all.
+    """
     found = {}
-    boards_in = []
+    undecoded = {}
+    refused = {}
     for doc in documents(data):
         found[doc.label] = found.get(doc.label, 0) + 1
-        if CONTENTS[doc.marker][1]:
-            boards_in.append(doc.label)
+        if not CONTENTS[doc.marker][1]:
+            continue
+        bucket = refused if doc.readable else undecoded
+        bucket[doc.label] = bucket.get(doc.label, 0) + 1
     contents = _describe(found)
 
-    if not boards_in:
-        return (f"no board document inside - this database holds {contents}. "
-                f"This package converts boards; schematics and libraries are "
-                f"out of scope")
+    if undecoded:
+        also = (" There is PCB ASCII text in here too, but it carries only the "
+                "board options." if b"|RECORD=" in data else "")
+        return (f"the {_describe(undecoded)} inside cannot be read yet - that "
+                f"format is not decoded. Contents: {contents}.{also} Open the "
+                f"project in Protel and save the board as PCB ASCII, or see "
+                f"docs/COMPATIBILITY.md")
+    if refused:
+        return (f"the {_describe(refused)} inside is in a format this package "
+                f"reads, but no board came out of it - the document is damaged "
+                f"or is stored in a way not seen before. Contents: {contents}")
     if b"|RECORD=" in data:
         return (f"the PCB ASCII text inside holds only board options, no "
                 f"objects. Contents: {contents}")
-    return (f"the board documents inside are in a format that is not decoded "
-            f"yet. Contents: {contents}. Open the project in Protel and save "
-            f"the board as PCB ASCII, or see docs/COMPATIBILITY.md")
+    if found:
+        return (f"no board document inside - this database holds {contents}. "
+                f"This package converts boards; schematics and libraries are "
+                f"out of scope")
+    # Nothing in the file announces itself as a Protel document. Saying which
+    # documents it does hold would need the Jet table structure, which is not
+    # decoded here; the filenames lying in the container run together with the
+    # text around them, so printing them would put a confident, mangled name in
+    # front of the caller. `--list` shows them with that caveat attached.
+    return ("no Protel document inside - nothing in this database announces "
+            "itself as a Protel board, schematic or library. Altium project "
+            "databases look like this; KiCad imports Altium .PcbDoc directly, "
+            "see docs/COMPATIBILITY.md. Run --list to see the raw document "
+            "names the container mentions")
 
 
 class _Document:
