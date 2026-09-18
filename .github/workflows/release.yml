@@ -4,6 +4,11 @@ name: release
 # artefacts on PyPI are the same event. Nothing here holds a token: PyPI trusts
 # this workflow through OIDC, which is configured once on pypi.org and needs no
 # secret in the repository.
+#
+# No deployment environment is used, so the trusted publisher on pypi.org is
+# configured with its environment field left empty. Publishing a release is
+# already a deliberate act; a second approval gate would only add a setting
+# that can silently disagree with this file.
 
 on:
   release:
@@ -29,7 +34,6 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-latest
-    environment: pypi
     permissions:
       id-token: write          # the whole of the authentication
     steps:
