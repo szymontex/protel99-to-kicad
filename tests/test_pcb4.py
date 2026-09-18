@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from protel99_parser import formats, pcb4
+from protel_to_kicad import formats, pcb4
 
 
 def write(tmp_path, name, text: str):

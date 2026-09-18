@@ -1,4 +1,4 @@
-# protel99-to-kicad - convert legacy Protel PCB files to KiCad
+# protel-to-kicad - open legacy Protel PCB files in KiCad
 
 Open old **Protel** `.PCB` board files in **KiCad**. No Protel, no Altium, no
 licence, no Windows. Pure Python, zero runtime dependencies.
@@ -29,11 +29,17 @@ Full detail, accuracy figures and caveats: **[docs/COMPATIBILITY.md](docs/COMPAT
 ## Install
 
 ```bash
-pip install -e .
+pip install protel-to-kicad
 ```
 
 Python 3.10 or newer, and nothing else. No compiled extensions, no
 dependencies, no KiCad installation needed to run the converter.
+
+From a clone, for working on it:
+
+```bash
+pip install -e .
+```
 
 ## Use
 
@@ -236,7 +242,7 @@ record of what was eliminated and why the eliminations missed.
 
 ## Adding a format
 
-`src/protel99_parser/formats.py` is the dispatcher and the machine-readable
+`src/protel_to_kicad/formats.py` is the dispatcher and the machine-readable
 half of the compatibility table. A new format is a reader that returns the
 shared `Board` model plus one row in `FORMATS` - not a branch at every call
 site. The KiCad writer never asks which generation it was handed.
@@ -252,6 +258,9 @@ fake - see [Contributing a sample](docs/COMPATIBILITY.md#contributing-a-sample).
 pip install -e .
 pytest
 ```
+
+Every push and pull request runs the suite on Python 3.10 and 3.13, builds the
+wheel and checks that the installed command starts.
 
 The suite covers the stream primitives, every record layout of every
 `PCB FILE 9` vintage, format detection and every ASCII reader, all against

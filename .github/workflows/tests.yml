@@ -19,3 +19,20 @@ jobs:
           python-version: ${{ matrix.python }}
       - run: pip install -e . pytest
       - run: pytest -q
+
+  # A package that passes its tests can still fail to build a wheel. Catching
+  # that on every pull request is cheaper than catching it at release.
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build twine
+      - run: python -m build
+      - run: twine check dist/*
+      - name: the installed package runs
+        run: |
+          pip install dist/*.whl
+          protel-to-kicad --help > /dev/null

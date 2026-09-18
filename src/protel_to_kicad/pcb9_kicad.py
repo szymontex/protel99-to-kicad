@@ -33,7 +33,7 @@ import sys
 import uuid
 from pathlib import Path
 
-from protel99_parser import ddb, formats, pcb9
+from protel_to_kicad import ddb, formats, pcb9
 
 MIL_TO_MM = 0.0254
 KICAD_VERSION = 20241229
