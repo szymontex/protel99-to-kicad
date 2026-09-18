@@ -8,7 +8,7 @@ identifier appears in no published specification; everything below describes
 export of the same boards. Section 10 gives the differences in the two earlier
 vintages.
 
-**Status (verified 2026-09-13).** The decoder in `src/protel99_parser/pcb9.py`
+**Status (verified 2026-09-13).** The decoder in `src/protel_to_kicad/pcb9.py`
 reproduces the ASCII v2.70 export of two reference boards to the last digit:
 every component, pad, track, via, arc, fill and text matches (board A: 244
 components, 516 pads, 3342 tracks, 122 vias, 18 arcs, 394 fills, 494 texts;

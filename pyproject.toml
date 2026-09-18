@@ -3,8 +3,8 @@ requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "protel99-to-kicad"
-version = "0.2.0"
+name = "protel-to-kicad"
+version = "0.3.0"
 description = "Convert legacy Protel PCB board files - Autotrax, Easytrax, Advanced PCB, Protel for Windows, PCB ASCII and .ddb design databases - to KiCad"
 requires-python = ">=3.10"
 license = "MIT"
@@ -26,11 +26,14 @@ keywords = ["protel", "kicad", "pcb", "eda", "autotrax", "easytrax", "altium",
             "file-format", "converter"]
 
 [project.scripts]
-protel-to-kicad = "protel99_parser.pcb9_kicad:main"
+protel-to-kicad = "protel_to_kicad.pcb9_kicad:main"
 
 [project.urls]
 Homepage = "https://github.com/szymontex/protel99-to-kicad"
 Repository = "https://github.com/szymontex/protel99-to-kicad"
+Changelog = "https://github.com/szymontex/protel99-to-kicad/releases"
+"Compatibility table" = "https://github.com/szymontex/protel99-to-kicad/blob/main/docs/COMPATIBILITY.md"
+"Format specification" = "https://github.com/szymontex/protel99-to-kicad/blob/main/docs/FORMAT.md"
 
 [tool.setuptools.packages.find]
 where = ["src"]

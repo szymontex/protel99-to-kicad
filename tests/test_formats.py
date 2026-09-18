@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from protel99_parser import formats, pcb6
+from protel_to_kicad import formats, pcb6
 
 
 def write(tmp_path, name, data: bytes):

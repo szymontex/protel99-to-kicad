@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from protel99_parser import pcb9, pcb9_kicad
+from protel_to_kicad import pcb9, pcb9_kicad
 
 
 def dim_bytes(mil: float) -> bytes:
@@ -309,7 +309,7 @@ def test_pad_name_from_the_file_cannot_break_out_of_the_s_expression():
     the attacker's choosing - extra footprints, zones or copper in a board a
     designer then sends to a fab.
     """
-    from protel99_parser import pcb9_kicad as K
+    from protel_to_kicad import pcb9_kicad as K
 
     out = []
     K.emit_free_pad(out, K.Frame(0.0, 10000.0),

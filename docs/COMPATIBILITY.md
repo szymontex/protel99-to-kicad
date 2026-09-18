@@ -33,7 +33,7 @@ head -c 40 YOURBOARD.PCB | strings | head -1
 Or let this package answer:
 
 ```bash
-python -c "from protel99_parser import formats; from pathlib import Path; \
+python -c "from protel_to_kicad import formats; from pathlib import Path; \
 print(formats.identify(Path('YOURBOARD.PCB')))"
 ```
 
@@ -393,7 +393,7 @@ library that is silently off by one is worse than none.
 Re-checking it is a few lines:
 
 ```python
-from protel99_parser.pcblib_parser import parse_pcblib      # at tag v0.1.0
+from protel_to_kicad.pcblib_parser import parse_pcblib      # at tag v0.1.0
 print(len(parse_pcblib("PFWDEMO.LIB")["DIP14"].pads))       # prints 15, should be 14
 ```
 
@@ -548,7 +548,7 @@ publish.
 
 ```bash
 # what this package claims to read, from the code rather than from this page
-python -c "from protel99_parser import formats; \
+python -c "from protel_to_kicad import formats; \
 [print(f.key, f.label, 'reads' if f.reader else 'recognises') for f in formats.FORMATS]"
 
 # the header of a file in hand

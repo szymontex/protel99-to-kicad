@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from protel99_parser import ddb, formats, pcbascii
+from protel_to_kicad import ddb, formats, pcbascii
 
 
 def write(tmp_path, name, text: str):
@@ -392,7 +392,7 @@ def test_a_component_with_no_bounding_box_does_not_drag_the_frame_to_zero(tmp_pa
     on a sheet ten times its own size with the board in one corner. Measured
     across 140 converted sample boards this affected 54 of them.
     """
-    from protel99_parser import pcb9_kicad
+    from protel_to_kicad import pcb9_kicad
 
     far = ("|RECORD=Component|ID=0|LAYER=TOP|X=30000mil|Y=28000mil|PATTERN=R\n"
            "|RECORD=Pad|COMPONENT=0|LAYER=TOP|NAME=1|X=30000mil|Y=28000mil"
