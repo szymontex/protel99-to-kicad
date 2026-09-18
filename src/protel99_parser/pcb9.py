@@ -733,6 +733,58 @@ def parse(path: Path, strict: bool = False) -> Board:
 
 # --------------------------------------------------------------------------
 
+def parsed_counts(b: Board) -> dict:
+    """What came out of the stream, in the categories a file header uses.
+
+    Component primitives hang off the component, not off the board, so every
+    class is the free objects plus the ones inside components. A designator and
+    a comment are lifted into named fields rather than left on the text list,
+    and the header counts them as texts, so they are counted back in here -
+    without that every board disagrees with itself.
+
+    `net_members` and `connections` appear only when the header states a figure
+    to compare them against, so a format that counts neither is not handed two
+    numbers with nothing to check them by.
+    """
+    counts = {
+        "components": len(b.components),
+        "tracks": len(b.tracks) + sum(len(c.tracks) for c in b.components),
+        "pads": len(b.pads) + sum(len(c.pads) for c in b.components),
+        "texts": (len(b.texts) + sum(len(c.texts) for c in b.components)
+                  + sum(bool(c.designator) + bool(c.comment)
+                        for c in b.components)),
+        "fills": len(b.fills) + sum(len(c.fills) for c in b.components),
+        "arcs": len(b.arcs) + sum(len(c.arcs) for c in b.components),
+        "vias": len(b.vias) + sum(len(c.vias) for c in b.components),
+        "nets": len(b.nets),
+    }
+    if "net_members" in b.counts:
+        counts["net_members"] = sum(len(n.members) for n in b.nets)
+        counts["connections"] = sum(len(n.connections) for n in b.nets)
+    return counts
+
+
+def header_disagreements(b: Board) -> dict:
+    """Counters where the file's own header and the parsed stream differ.
+
+    `{key: (header, parsed)}`, empty when they agree or when the file states no
+    counts. This is the one witness always present: a board file carries its
+    author's own totals, so a mismatch means records were lost or invented -
+    and a reader that raised nothing while losing them would otherwise look
+    like a clean conversion.
+
+    A header of all zeros is not a disagreement. Some exporters write the count
+    line and leave it at zero - every `PCB FILE 6 VERSION 1.10` board seen does
+    - and reading that as "this file should be empty" would put a mismatch on
+    every board from those tools while saying nothing true about any of them.
+    """
+    got = parsed_counts(b)
+    stated = {k: b.counts[k] for k in got if k in b.counts}
+    if not any(stated.values()):
+        return {}
+    return {k: (stated[k], got[k]) for k in stated if stated[k] != got[k]}
+
+
 def summary(b: Board) -> str:
     comp_tracks = sum(len(c.tracks) for c in b.components)
     comp_vias = sum(len(c.vias) for c in b.components)

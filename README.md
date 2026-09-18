@@ -44,16 +44,22 @@ protel-to-kicad --batch archive/ converted/        # every readable board under 
 
 A mixed directory needs no sorting first. Boards in a format that is
 recognised but not decoded are reported by name and counted, not skipped in
-silence:
+silence, and anything that went wrong without raising - a board that lost
+records to damage, one whose object counts do not match the totals in its own
+header, objects naming a net the file does not define, objects on a Protel
+layer KiCad has no equivalent for - is said out loud rather than left in the
+numbers:
 
 ```
 ok    analog-front.PCB  [pcb9]  components 108 segments 1402 vias 138 nets 106
 ok    z80-cpu.PCB       [pcb4]  components  52 segments  594 vias  29 nets   0
 ok    filter-rev2.pcb   [pcb6]  components  97 segments  585 vias  11 nets  65
 ok    psu-board.pcb     [pcb6]  components 136 segments  799 vias  17 nets  89  SALVAGED (3 errors)
+ok    backplane.pcb     [pcb6]  components  38 segments  923 vias  47 nets  25  HEADER MISMATCH (arcs says 13, read 17)
 ok    tag104.ddb        [ddb ]  components  60 segments 3282 vias  60 nets  32
-batch: 18 converted, 0 failed
-       1 skipped: PCB 4.0 Binary File not decoded yet
+batch: 19 converted, 0 failed
+       1 disagree with their own header - run with --strict to fail on that
+       1 skipped: the 8 x PCB 4.0 binary board inside cannot be read yet - that format is not decoded
 ```
 
 ### Which format is this file?
@@ -92,6 +98,7 @@ to do about it. Detail: [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md#ddb-design
 | `--list` | List the documents inside a `.ddb` design database and stop |
 | `--document N` | Which board to take out of a `.ddb`, by index from `--list` or by format name. Default is the largest board in it |
 | `--hide-designators` | Write designators as hidden fields, as Protel's silkscreen plots show them |
+| `--strict` | Exit non-zero if a board disagrees with its own header or was read in salvage mode |
 | `--quiet` | Suppress the per-board summary |
 
 ## Why this exists
@@ -169,6 +176,12 @@ them written by anyone involved here, were converted and then drawn by
 | `PCB FILE 9 VERSION 2.60` / `2.00` | 9 | 9 | 0 | 0 |
 | `.ddb` design databases | 16 | 6 | 10 | 0 |
 | Protel PCB ASCII | 1 | 1 | 0 | 0 |
+
+**Two of those 160 do not match the object totals stated in their own header**,
+and both say so on the way past: `DELPHI-PCB.pcb` reads 17 arcs where the header
+says 13, and `RPCB94.PCB` reads 780 of the 1095 nets it claims. Nothing raises
+on either - the stream stays in step and every other class is exact - which is
+precisely why the check exists. `--strict` turns it into a non-zero exit.
 
 Salvage means the reader lost records to damage and said so with a line number,
 not that it guessed. The `.ddb` figure is high for a reason worth knowing: the

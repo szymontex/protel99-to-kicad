@@ -332,6 +332,49 @@ Schematics are out of scope for this package, which converts boards.
 
 ---
 
+## When a board converts but something was lost
+
+Three things can go wrong without any reader raising, and all three are now
+said out loud rather than left inside a statistics dictionary:
+
+| What | How it shows | What it means |
+|---|---|---|
+| The parse does not match the object totals in the file's own header | `HEADER MISMATCH (arcs says 13, read 17)` | Records were lost or invented. The header is the one witness always present, so this is the check that does not need an export, a gerber or a reference board |
+| Records were unreadable and the reader resynchronised past them | `SALVAGED (3 errors)` | Byte-level damage in the source file; each one is reported with its offset |
+| Objects name a net the file never defines, or sit on a Protel layer with no KiCad equivalent | a warning line per board | Those objects reach KiCad with no net, or are not drawn at all |
+
+`--strict` turns any of them into a non-zero exit, which is what a build should
+use.
+
+One case used to be a fault of this converter rather than of the file. The layer
+map for a board was derived from the previous board's map instead of from the
+default, so the first board with its outline on layer 28 - `PCB FILE 6`,
+Autotrax, or `PCB FILE 9` before 2.70 - dropped layer 29 from the table, and
+every `PCB FILE 9` board converted after it in the same run lost its outline
+without a word. Fixed, with a regression test. Layer 29 is now remapped to
+`Dwgs.User` rather than dropped when a board draws its boundary elsewhere,
+because Mechanical 1 still holds drawings worth keeping.
+
+A header of all zeros is **not** counted as a disagreement. Some exporters write
+the count line and leave it at zero - every `PCB FILE 6 VERSION 1.10` board seen
+does - and treating that as "this file should be empty" would put a mismatch on
+every board from those tools while saying nothing true about any of them.
+
+Measured across the 160 sample boards that convert, **17 report something**: 10
+carry byte-level damage and are salvaged around, 9 hold objects naming a net the
+file never defines, 11 hold objects on a Protel layer with no KiCad equivalent
+(25, 23-24, 0 and 100 - the last two are not layer numbers Protel ever assigned),
+and **2 disagree with their own header**:
+
+- `DELPHI-PCB.pcb` (`PCB FILE 6 VERSION 2.80`): header says 13 arcs, the stream
+  holds 17. Every other class matches.
+- `RPCB94.PCB` (`PCB FILE 9 VERSION 2.70`): 780 of the 1095 nets it claims, with
+  more net members and connections than the header states. Components, pads,
+  tracks, vias and arcs are all exact, so the net section alone is misread on
+  this board. Undiagnosed.
+
+---
+
 ## `PROTEL PCBLIB` footprint libraries
 
 **Status: not read.** A `.LIB` beside a Protel project holds footprints, and

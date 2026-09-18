@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from protel99_parser import pcb9
+from protel99_parser import pcb9, pcb9_kicad
 
 
 def dim_bytes(mil: float) -> bytes:
@@ -166,6 +166,44 @@ class TestVintageSelection:
         assert "3.50" in str(e.value) and "2.70" in str(e.value)
 
 
+class TestHeaderWitness:
+    """The file states its author's own object totals. A parse that does not
+    reproduce them lost or invented records, and nothing raises when it does -
+    so this check is the only thing between a quiet loss and a clean-looking
+    conversion."""
+
+    def board(self, counts: dict, **objects) -> pcb9.Board:
+        b = pcb9.Board(Path("x.PCB"), "PCB FILE 9 VERSION 2.70", counts)
+        for name, value in objects.items():
+            setattr(b, name, value)
+        return b
+
+    def test_a_header_that_matches_the_parse_says_nothing(self):
+        b = self.board({"tracks": 2, "vias": 1},
+                       tracks=[object(), object()], vias=[object()])
+        assert pcb9.header_disagreements(b) == {}
+
+    def test_a_header_that_differs_names_both_numbers(self):
+        b = self.board({"tracks": 5, "vias": 1},
+                       tracks=[object(), object()], vias=[object()])
+        assert pcb9.header_disagreements(b) == {"tracks": (5, 2)}
+
+    def test_an_all_zero_header_is_not_a_disagreement(self):
+        """Some exporters write the count line and leave it at zero - every
+        `PCB FILE 6 VERSION 1.10` board seen does. Reading that as "this file
+        should be empty" would flag every board from those tools and say
+        nothing true about any of them."""
+        counts = dict.fromkeys(
+            ("components", "tracks", "pads", "texts", "fills", "arcs", "vias", "nets"), 0)
+        b = self.board(counts, tracks=[object()] * 2381, arcs=[object()] * 194)
+        assert pcb9.header_disagreements(b) == {}
+
+    def test_a_counter_the_header_does_not_carry_is_not_compared(self):
+        b = self.board({"tracks": 2}, tracks=[object(), object()],
+                       vias=[object()] * 9)
+        assert pcb9.header_disagreements(b) == {}
+
+
 # Reference boards are not shipped: they belong to the archive this parser was
 # written for. Point PCB9_REFERENCE_DIR at a directory holding them to run these
 # checks; without it they skip. The counts are the ones the file's own header
@@ -200,6 +238,53 @@ def test_reference_board_counts_match_header(name, expected):
     assert {k: b.counts[k] for k in expected} == expected
     assert b.unknown_tags == {}
     assert b.errors == []
+
+
+class TestConcerns:
+    """Everything that goes wrong without raising has to reach the caller in
+    words, or a conversion that lost objects reads exactly like one that did
+    not."""
+
+    def test_a_clean_conversion_says_nothing(self):
+        assert pcb9_kicad.concerns({"parse_errors": 0, "header_disagreements": {},
+                                    "net_index_out_of_range": 0,
+                                    "unmapped_layers": []}) == []
+
+    def test_each_kind_of_quiet_loss_gets_its_own_line(self):
+        told = pcb9_kicad.concerns({
+            "parse_errors": 3,
+            "header_disagreements": {"nets": (1095, 780)},
+            "net_index_out_of_range": 14857,
+            "unmapped_layers": [23, 24],
+        })
+        assert len(told) == 4
+        joined = " ".join(told)
+        assert "nets says 1095, read 780" in joined
+        assert "3 records" in joined
+        assert "14857 objects" in joined
+        assert "[23, 24]" in joined
+
+
+def test_one_board_does_not_change_the_layer_map_of_the_next(tmp_path):
+    """A batch converts boards from several generations in one process.
+
+    The outline sits on layer 29 from `PCB FILE 9` 2.70 onwards and on 28
+    before that and in `PCB FILE 6`. Building each board's layer map from the
+    previous board's map instead of from the default drops 29 permanently the
+    first time an older board goes through, and every later board then loses
+    its outline - silently, because an unmapped layer is drawn on Cmts.User.
+    """
+    board = pcb9.Board(Path("x.PCB"), "PCB FILE 9 VERSION 2.70", {})
+    board.tracks = [pcb9.Track(0, "h", 0.0, 0.0, 1000.0, 0.0, 10.0, 29, 0, ())]
+
+    def outline_lines(layer: int) -> int:
+        text, _ = pcb9_kicad.generate(board, layer)
+        return text.count('"Edge.Cuts"')
+
+    first = outline_lines(29)
+    outline_lines(28)                       # an older generation goes through
+    assert outline_lines(29) == first       # the newer one is unharmed
+    assert pcb9_kicad.DEFAULT_LAYERS[29] == "Edge.Cuts"
 
 
 class _FreePad:
